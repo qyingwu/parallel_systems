@@ -25,6 +25,9 @@ int main(int argc, char **argv)
     // Setup threads
     pthread_t *threads = sequential ? NULL : alloc_threads(opts.n_threads);;
 
+    // Initialize barrier
+    init_barrier(opts.n_threads);
+    
     // Setup args & read input data
     prefix_sum_args_t *ps_args = alloc_args(opts.n_threads);
     int n_vals;
@@ -51,7 +54,7 @@ int main(int argc, char **argv)
         }
     }
     else {
-        //start_threads(threads, opts.n_threads, ps_args, <your function>);
+        start_threads(threads, opts.n_threads, ps_args, compute_prefix_sum);
 
         // Wait for threads to finish
         join_threads(threads, opts.n_threads);

@@ -12,6 +12,10 @@ int next_power_of_two(int x) {
     return pow;
 }
 
+int log2(int x) {
+    return 31 - __builtin_clz(x);
+}
+
 void fill_args(prefix_sum_args_t *args,
                int n_threads,
                int n_vals,
