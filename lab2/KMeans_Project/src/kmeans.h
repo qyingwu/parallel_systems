@@ -30,10 +30,4 @@ void kmeans_thrust(int k, int dims, int max_iters, double threshold,
 // Function to read input file into a vector of points
 std::vector<std::vector<double>> read_input_file(const std::string& filename, int dims);
 
-// Wrapper function to run KMeans based on user selection (CPU, CUDA, or Thrust)
-void run_kmeans(int k, int dims, int max_iters, double threshold, 
-                bool output_centroids, int seed, 
-                bool use_cuda, bool use_thrust, 
-                const std::string& input_file);
-
 #endif // KMEANS_H

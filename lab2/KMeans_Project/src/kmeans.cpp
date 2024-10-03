@@ -10,6 +10,8 @@
 #include <algorithm>
 #include <ctime>
 #include <cmath>
+#include <cstdlib>
+
 
 // (kmeans_srand and kmeans_rand) to generate initial random centroids
 static unsigned long int next = 1;
@@ -123,15 +125,25 @@ void run_kmeans(int k, int dims, int max_iters, double threshold, bool output_ce
     // Measure elapsed time for KMeans
     auto start = std::chrono::high_resolution_clock::now();
 
-    std::cout << "Running KMeans with CPU..." << std::endl;
     int iterations_run = 0;
-    kmeans_cpu(k, dims, max_iters, threshold, data, labels, centroids, iterations_run);
+
+    if (use_cuda) {
+        std::cout << "Running KMeans with CUDA..." << std::endl;
+        kmeans_cuda(k, dims, max_iters, threshold, data, labels, centroids);
+    } else if (use_thrust) {
+        std::cout << "Running KMeans with Thrust..." << std::endl;
+        kmeans_thrust(k, dims, max_iters, threshold, data, labels, centroids);
+    } else {
+        std::cout << "Running KMeans with CPU..." << std::endl;
+        kmeans_cpu(k, dims, max_iters, threshold, data, labels, centroids, iterations_run);
+    }
 
     auto end = std::chrono::high_resolution_clock::now();
 
     // Calculate time elapsed in milliseconds
     std::chrono::duration<double, std::milli> elapsed_time = end - start;
-    double time_per_iter = elapsed_time.count() / iterations_run;
+    double total_time = elapsed_time.count();
+    double time_per_iter = iterations_run > 0 ? total_time / iterations_run : total_time;
 
     // Output results
     if (output_centroids) {
@@ -145,7 +157,7 @@ void run_kmeans(int k, int dims, int max_iters, double threshold, bool output_ce
         }
     } else {
         // Output point labels
-        std::cout << "clusters:";
+        std::cout << "Clusters:";
         for (int i = 0; i < n_points; ++i) {
             std::cout << " " << labels[i];
         }
@@ -154,5 +166,71 @@ void run_kmeans(int k, int dims, int max_iters, double threshold, bool output_ce
 
     // Output the time and iterations
     std::cout << "Iterations ran: " << iterations_run << std::endl;
-    std::cout << "Time per iteration: " << time_per_iter << " ms" << std::endl;
+    std::cout << "Total time: " << total_time << " ms" << std::endl;
+    if (iterations_run > 0) {
+        std::cout << "Time per iteration: " << time_per_iter << " ms" << std::endl;
+    }
+}
+
+// Function to parse command-line arguments and run KMeans
+void run_kmeans_from_cli(int argc, char *argv[]) {
+    // Command-line argument parsing
+    int k = -1, dims = -1, max_iters = 150;
+    double threshold = 1e-4;
+    std::string input_file;
+    bool output_centroids = false;
+    int seed = 8675309;  // Default seed for random initialization
+    bool use_cuda = false;
+    bool use_thrust = false;
+
+    // Parsing command-line arguments
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "-k") {
+            k = std::atoi(argv[++i]);
+        } else if (std::string(argv[i]) == "-d") {
+            dims = std::atoi(argv[++i]);
+        } else if (std::string(argv[i]) == "-i") {
+            input_file = argv[++i];
+        } else if (std::string(argv[i]) == "-m") {
+            max_iters = std::atoi(argv[++i]);
+        } else if (std::string(argv[i]) == "-t") {
+            threshold = std::atof(argv[++i]);
+        } else if (std::string(argv[i]) == "-c") {
+            output_centroids = true;
+        } else if (std::string(argv[i]) == "-s") {
+            seed = std::atoi(argv[++i]);
+        } else if (std::string(argv[i]) == "--use_cuda") {
+            use_cuda = true;
+        } else if (std::string(argv[i]) == "--use_thrust") {
+            use_thrust = true;
+        } else {
+            std::cerr << "Unknown argument: " << argv[i] << std::endl;
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    // Validate mandatory arguments
+    if (k == -1 || dims == -1 || input_file.empty()) {
+        std::cerr << "Usage: " << argv[0] << " -k num_clusters -d dims -i input_file [-m max_iters] [-t threshold] [-c] [-s seed] [--use_cuda] [--use_thrust]" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    // Start measuring the time
+    auto start_time = std::chrono::high_resolution_clock::now();
+
+    // Call run_kmeans to run the chosen KMeans implementation
+    run_kmeans(k, dims, max_iters, threshold, output_centroids, seed, use_cuda, use_thrust, input_file);
+
+    // End measuring time
+    auto end_time = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double, std::milli> elapsed_time = end_time - start_time;
+
+    // Output time per iteration and number of iterations
+    std::cout << "Total time: " << elapsed_time.count() << " ms" << std::endl;
+}
+
+// Main function is now inside kmeans.cpp
+int main(int argc, char *argv[]) {
+    run_kmeans_from_cli(argc, argv);
+    return 0;
 }

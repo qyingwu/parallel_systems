@@ -1,5 +1,3 @@
-
-/**
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
 #include <thrust/copy.h>
@@ -142,4 +140,3 @@ void kmeans_thrust(int k, int dims, int max_iters, double threshold,
     }
     thrust::copy(d_labels.begin(), d_labels.end(), labels.begin());
 }
- * 
