@@ -88,13 +88,4 @@ void kmeans_cpu(int k, int dims, int max_iters, double threshold, const std::vec
         }
     }
 
-    // Output final centroids
-    std::cout << "Final centroids:" << std::endl;
-    for (int c = 0; c < k; ++c) {
-        std::cout << "Centroid " << c << ": ";
-        for (int d = 0; d < dims; ++d) {
-            std::cout << centroids[c][d] << " ";
-        }
-        std::cout << std::endl;
-    }
 }
