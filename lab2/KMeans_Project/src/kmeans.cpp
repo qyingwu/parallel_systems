@@ -27,6 +27,7 @@ int kmeans_rand() {
 }
 
 // Function to read input file into a vector of points
+// Function to read input file into a vector of points
 std::vector<std::vector<double>> read_input_file(const std::string &filename, int dims) {
     std::ifstream infile(filename);
     if (!infile.is_open()) {
@@ -39,6 +40,12 @@ std::vector<std::vector<double>> read_input_file(const std::string &filename, in
     while (std::getline(infile, line)) {
         std::istringstream iss(line);
         std::vector<double> point(dims);
+        
+        // Skip the ID (first element)
+        double id;
+        iss >> id;  // Skip this value, assuming it's an ID
+        
+        // Parse the feature values
         for (int d = 0; d < dims; ++d) {
             iss >> point[d];
         }
@@ -48,34 +55,7 @@ std::vector<std::vector<double>> read_input_file(const std::string &filename, in
     return data;
 }
 
-// Function to normalize the dataset (Min-Max normalization)
-void min_max_normalize(std::vector<std::vector<double>>& data) {
-    int n_points = data.size();
-    if (n_points == 0) return;  // Check if data is empty
-    int dims = data[0].size();
 
-    std::vector<double> min_vals(dims, std::numeric_limits<double>::max());
-    std::vector<double> max_vals(dims, std::numeric_limits<double>::lowest());
-
-    // Find the min and max for each dimension
-    for (int i = 0; i < n_points; ++i) {
-        for (int d = 0; d < dims; ++d) {
-            if (data[i][d] < min_vals[d]) min_vals[d] = data[i][d];
-            if (data[i][d] > max_vals[d]) max_vals[d] = data[i][d];
-        }
-    }
-
-    // Normalize the data using Min-Max normalization
-    for (int i = 0; i < n_points; ++i) {
-        for (int d = 0; d < dims; ++d) {
-            if (max_vals[d] != min_vals[d]) {  // Avoid division by zero
-                data[i][d] = (data[i][d] - min_vals[d]) / (max_vals[d] - min_vals[d]);
-            } else {
-                data[i][d] = 0.0; // If max equals min, set normalized value to 0
-            }
-        }
-    }
-}
 
 /// Initialize centroids using custom random number generation
 void initialize_centroids(int k, const std::vector<std::vector<double>>& data, 
@@ -113,10 +93,6 @@ void run_kmeans(int k, int dims, int max_iters, double threshold, bool output_ce
 
     // Read input data from file
     std::vector<std::vector<double>> data = read_input_file(input_file, dims);
-    
-    // Normalize the data (Min-Max normalization)
-    min_max_normalize(data);
-
     int n_points = data.size();
 
     // Initialize labels and centroids
@@ -130,16 +106,16 @@ void run_kmeans(int k, int dims, int max_iters, double threshold, bool output_ce
 
     if (use_cuda) {
         std::cout << "Running KMeans with CUDA..." << std::endl;
-        kmeans_cuda(k, dims, max_iters, threshold, data, labels, centroids);
+        kmeans_cuda(k, dims, max_iters, threshold, data, labels, centroids, seed);
     } else if (use_thrust) {
         std::cout << "Running KMeans with Thrust..." << std::endl;
-        kmeans_thrust(k, dims, max_iters, threshold, data, labels, centroids);
+        kmeans_thrust(k, dims, max_iters, threshold, data, labels, centroids, seed); 
     } else if (use_cpu) {
         std::cout << "Running KMeans with CPU..." << std::endl;
-        kmeans_cpu(k, dims, max_iters, threshold, data, labels, centroids, iterations_run);
+        kmeans_cpu(k, dims, max_iters, threshold, data, labels, centroids, iterations_run, seed);
     } else {
         std::cout << "Running KMeans with CPU..." << std::endl;
-        kmeans_cpu(k, dims, max_iters, threshold, data, labels, centroids, iterations_run);
+        kmeans_cpu(k, dims, max_iters, threshold, data, labels, centroids, iterations_run, seed);
     }
 
     auto end = std::chrono::high_resolution_clock::now();
@@ -168,13 +144,18 @@ void run_kmeans(int k, int dims, int max_iters, double threshold, bool output_ce
         std::cout << std::endl;
     }
 
-    // Output the time and iterations
-    std::cout << "Iterations ran: " << iterations_run << std::endl;
-    std::cout << "Total time: " << total_time << " ms" << std::endl;
-    if (iterations_run > 0) {
-        std::cout << "Time per iteration: " << time_per_iter << " ms" << std::endl;
+    if (use_cpu){
+        // Output the time and iterations
+        std::cout << "Iterations ran: " << iterations_run << std::endl;
+        std::cout << "Total time: " << total_time << " ms" << std::endl;
+        if (iterations_run > 0) {
+            std::cout << "Time per iteration: " << time_per_iter << " ms" << std::endl;
+        }
+
     }
+    
 }
+
 
 // Function to parse command-line arguments and run KMeans
 void run_kmeans_from_cli(int argc, char *argv[]) {

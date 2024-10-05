@@ -1,3 +1,4 @@
+
 #include "kmeans.h"
 #include "distance.hpp"
 #include <iostream>
@@ -9,19 +10,18 @@
 
 // sequential CPU-based KMeans function
 void kmeans_cpu(int k, int dims, int max_iters, double threshold, const std::vector<std::vector<double>> &data, 
-                std::vector<int> &labels, std::vector<std::vector<double>> &centroids, int &iterations_run) {
+                std::vector<int> &labels, std::vector<std::vector<double>> &centroids, int &iterations_run, int seed) {
 
     int n_points = data.size();
     centroids.clear();
 
-    // Initialize centroids randomly using initialize_centroids
-    initialize_centroids(k, data, centroids, time(0));
+    // Initialize centroids randomly using the provided seed
+    initialize_centroids(k, data, centroids, seed); 
 
     std::vector<std::vector<double>> new_centroids(k, std::vector<double>(dims, 0.0));
     std::vector<int> cluster_sizes(k, 0);
 
     double total_shift = 0.0;
-
     iterations_run = 0; 
 
     for (int iter = 0; iter < max_iters; ++iter) {
@@ -65,7 +65,7 @@ void kmeans_cpu(int k, int dims, int max_iters, double threshold, const std::vec
                 // Reinitialize centroid using the initialize_centroids function if no points were assigned
                 std::cerr << "Cluster " << c << " is empty. Reinitializing centroid..." << std::endl;
                 std::vector<std::vector<double>> temp_centroids;
-                initialize_centroids(1, data, temp_centroids, time(0));  // Reinitialize one centroid
+                initialize_centroids(1, data, temp_centroids, seed + iter);  // Change seed slightly to avoid repetition
                 new_centroids[c] = temp_centroids[0];  // Assign the new randomly initialized centroid
             }
         }
@@ -86,6 +86,21 @@ void kmeans_cpu(int k, int dims, int max_iters, double threshold, const std::vec
             std::cout << "Converged in " << iter + 1 << " iterations." << std::endl;
             break;
         }
-    }
 
+        // Handle partially converged points by checking point-wise convergence
+        bool all_points_converged = true;
+        for (int i = 0; i < n_points; ++i) {
+            int cluster_id = labels[i];
+            double point_shift = euclidean_distance(data[i], centroids[cluster_id]);
+            if (point_shift > threshold) {
+                all_points_converged = false;
+                break;
+            }
+        }
+
+        if (all_points_converged) {
+            std::cout << "All points converged in " << iter + 1 << " iterations." << std::endl;
+            break;
+        }
+    }
 }

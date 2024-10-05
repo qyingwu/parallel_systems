@@ -78,7 +78,7 @@ __global__ void compute_change(double* d_centroids, double* d_old_centroids, dou
 
 // Wrapper function for basic CUDA KMeans implementation
 void kmeans_cuda(int k, int dims, int max_iters, double threshold, const std::vector<std::vector<double>>& data,
-                 std::vector<int>& labels, std::vector<std::vector<double>>& centroids) {
+                 std::vector<int>& labels, std::vector<std::vector<double>>& centroids, int seed) {
 
     int num_points = data.size();
     double* d_points;
@@ -106,7 +106,9 @@ void kmeans_cuda(int k, int dims, int max_iters, double threshold, const std::ve
         }
     }
 
-    initialize_centroids(k, data, centroids, time(0));
+    // Initialize centroids using the provided seed from the CLI
+    initialize_centroids(k, data, centroids, seed); // Use the seed from the CLI
+
     for (int i = 0; i < k; ++i) {
         for (int d = 0; d < dims; ++d) {
             h_centroids[i * dims + d] = centroids[i][d];
