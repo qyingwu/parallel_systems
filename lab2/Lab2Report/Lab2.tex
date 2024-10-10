@@ -1,0 +1,164 @@
+%To compile, run the following command:
+%   latexmk -pdf latex_template.tex 
+%
+% To edit, you can use your favorite text editor or LaTeX editors such as:
+%   Texmaker and TeXworks.
+%
+% To set up your own TeX system, you can install TeX Live. See:
+% https://www.tug.org/texlive/
+
+
+% For a recent install of texlive on Ubuntu 18.04 that is adequate for
+% compiling this file, I used the following commands:
+%
+% sudo apt install texlive-latex-base
+% sudo apt install texlive-latex-extra
+% sudo apt install texlive-science
+
+\documentclass[letterpaper,12pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amsthm,amsfonts,amssymb}
+\usepackage{mathtools}
+\usepackage{algorithm,algpseudocode}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage{array}
+\usepackage{subcaption}
+
+\theoremstyle{remark}
+\newtheorem{claim}{Claim}
+
+\DeclarePairedDelimiter\abs{\lvert}{\rvert}
+\DeclarePairedDelimiter\floor{\lfloor}{\rfloor}
+\DeclarePairedDelimiter\ceiling{\lceil}{\rceil}
+
+\begin{document}
+
+\title{Lab 2: KMeans with CUDA: \\
+\large 
+Performance analysis and detailed approach
+   }
+
+
+\date{\today}
+\author{Qiying Wu}
+\maketitle
+
+
+
+
+
+\section*{Abstract }
+
+ This report presents the implementation and performance analysis of the KMeans clustering algorithm using both CPU and GPU parallelism. The goal of this lab is to explore the benefits of GPU programming through the use of CUDA and Thrust libraries. The KMeans algorithm, commonly used for unsupervised machine learning, was implemented in four variations: a sequential CPU version, a basic CUDA version, an optimized CUDA version utilizing shared memory, and a high-level parallel implementation using the Thrust library.
+
+I have conducted performance evaluations across datasets of varying sizes and dimensions, comparing the execution times and speedups of each implementation. The results show significant improvements in the CUDA-based versions, with the shared memory implementation providing the fastest runtime, surpassing both the sequential and Thrust implementations. We also analyze the effect of data transfer overhead between the CPU and GPU and examine the impact of non-deterministic behavior introduced by atomic operations in the CUDA implementations. The analysis highlights the trade-offs between ease of implementation and performance optimization, with the CUDA shared memory version achieving the best speedup compared to the sequential approach. 
+
+
+\section*{Introduction }
+KMeans is one of the most widely used clustering algorithms in machine learning, particularly for unsupervised tasks where the goal is to group data points into cohesive clusters based on feature similarity. The algorithm iteratively assigns data points to clusters and updates the cluster centroids until convergence. Despite its simplicity, KMeans is computationally expensive, especially for large datasets and high-dimensional data, making it an ideal candidate for parallelization.
+
+The purpose of this lab is to explore the performance benefits of using GPUs for parallel computation through the implementation of KMeans using CUDA and the Thrust library. GPU programming enables significant speedups by exploiting data parallelism, allowing thousands of threads to run concurrently, which can greatly reduce the execution time of computationally intensive tasks like KMeans. 
+
+In this lab, we implement and compare four different versions of the KMeans algorithm:
+\begin{itemize}
+    \item \textbf{Sequential CPU Implementation:} A basic, single-threaded version of KMeans executed on the CPU.
+    \item \textbf{CUDA Basic Implementation:} A parallel GPU version of KMeans using CUDA for computation.
+    \item \textbf{CUDA with Shared Memory:} An optimized GPU version that utilizes CUDA's shared memory to reduce global memory access latency and improve performance.
+    \item \textbf{Thrust Implementation:} A high-level parallel implementation using NVIDIA's Thrust library, which abstracts thread management and allows for efficient use of parallel primitives.
+\end{itemize}
+
+This report presents the design and implementation of these different approaches, along with performance analyses based on their execution times for various datasets. We also discuss the challenges encountered during the optimization process, including memory management and non-deterministic behavior caused by atomic operations in CUDA. By comparing the performance of these implementations, we aim to highlight the trade-offs between different levels of abstraction in GPU programming and the impact of hardware-level optimizations on the performance of parallel algorithms like KMeans.
+
+
+
+\section{Hardware and Software Specifications}
+\textbf{GPU Hardware Details:}
+\begin{itemize}
+    \item GPU: [Include your GPU details here]
+    \item CUDA cores: [Number of CUDA cores]
+\end{itemize}
+
+\textbf{CPU Hardware Details:}
+\begin{itemize}
+    \item CPU: [Include your CPU details here]
+    \item Cores: [Number of CPU cores]
+\end{itemize}
+
+\textbf{OS Details:}
+\begin{itemize}
+    \item Operating System: [Include your OS version]
+    \item CUDA Version: [CUDA Version]
+    \item Compiler: [GCC/NVCC version used]
+\end{itemize}
+\section{Methodology}
+In this lab, the starter code includes spin\_barrier and I implemented a counter-based barrier for prefix\_sum calculation. And using Blelloch algorithm (Work-Efficient Parallel Prefix Scan) with two sweeps to calculate our prefix\_sum parallely.\\
+
+\section{Algorithm and Implementations}
+\subsection{Sequential CPU Implementation}
+The sequential CPU implementation was designed to iteratively assign data points to the nearest centroid and then update the centroids by calculating the mean of the assigned points. We ensured the algorithm converges when the centroids stop moving significantly or after a fixed number of iterations.
+
+\subsection{CUDA Basic Implementation}
+In the CUDA implementation, each data point and centroid computation was parallelized using CUDA threads. Kernels were designed to compute the distances between points and centroids, assign labels, and update centroids. The implementation includes memory transfers between host (CPU) and device (GPU), which contributes to the overall runtime.
+
+\subsection{CUDA with Shared Memory}
+The shared memory version of CUDA optimized memory access by reducing global memory accesses and using shared memory to store centroids, thus reducing latency and improving performance.
+
+\subsection{Parallel GPU Implementation using Thrust}
+The Thrust-based implementation used high-level parallel primitives such as \texttt{thrust::for\_each}, \texttt{thrust::reduce\_by\_key}, and \texttt{thrust::transform} to implement the KMeans algorithm. This method abstracts CUDA thread management but may not fully utilize GPU capabilities compared to direct CUDA kernel implementation.
+
+\section{Performance Analysis}
+
+\subsection{Execution Times}
+
+
+\subsection{Fastest Implementation}
+The fastest implementation was the \textbf{[CUDA Shared Memory/Basic]} version, which outperformed other implementations due to optimized memory access and parallelism. This matched expectations, as the shared memory version is designed to reduce latency by minimizing global memory accesses.
+
+\subsection{Slowest Implementation}
+The slowest implementation was \textbf{[Thrust/Sequential]}, as expected. The Thrust implementation abstracts memory management, which can introduce overhead, while the sequential implementation is inherently limited by the lack of parallelism.
+
+\subsection{Data Transfer Overhead}
+In the CUDA implementations, a significant portion of the runtime was spent transferring data between the CPU and GPU. For larger input sizes, this transfer overhead became more pronounced, accounting for approximately \textbf{[fraction]} of the total runtime.
+
+\subsection{Speedup Comparison}
+The expected speedup was estimated based on the number of CUDA cores and threads. The best-case speedup was \textbf{[calculated speedup]} times faster than the sequential implementation, while the observed speedup for the CUDA Shared Memory implementation was \textbf{[observed speedup]} times faster.
+
+\subsection{Convergence Behavior}
+For all implementations, convergence was achieved within \textbf{[number]} iterations on average. The convergence time was consistent across implementations but varied based on the use of atomic operations in the CUDA versions, which introduced some non-determinism in the iteration count.
+
+\section{Time Spent on the Lab}
+I spent approximately \textbf{[number of hours]} hours working on this lab, including coding, testing, and performance analysis.
+
+
+
+\section*{Conclusions}
+
+The CUDA implementations demonstrated significant speedups compared to the sequential version, with the shared memory implementation being the fastest. The trade-off between abstraction and performance was evident in the Thrust implementation, which, while easier to write, did not achieve the same performance as the more optimized CUDA kernel implementations.
+
+
+
+
+
+
+\section*{6. References}
+
+
+\subsection*{Technical Sources:}
+
+\begin{itemize}
+
+    \item \href{https://medium.com/nerd-for-tech/understanding-implementation-of-work-efficient-parallel-prefix-scan-cca2d5335c9b}{Understanding Implementation of Work-Efficient Parallel Prefix Scan}
+    \item \href{https://www.cs.utexas.edu/~rossbach/cs380p/lab/prefix-sum-pthreads-cs380p.html}{Lab 1: Prefix Scan and Barriers}
+    \item \href{https://www.cs.cmu.edu/~guyb/papers/Ble93.pdf}{Guy E. Blelloch: Prefix Sums and Their Applications}
+    \item \href{https://www.cs.utexas.edu/~rossbach/cs380p/lectures/06-Conditions+Barriers.pdf}{CS380P Lecture: Conditions and Barriers}
+    \item \href{https://en.cppreference.com/w/cpp/atomic/memory_order}{C++ Atomic Memory Order Reference}
+    \item \href{https://medium.com/@joao_vaz/spin-lock-in-modern-c-with-atomics-memory-barriers-and-exponential-back-off-522798aca817}{Spin-Lock in Modern C++ with Atomics, Memory Barriers, and Exponential Back-Off}
+    \item \href{https://coffeebeforearch.github.io/2020/11/07/spinlocks-6.html}{Spinlocks in C++ with CoffeeBeforeArch}
+    \item \href{https://developer.nvidia.com/gpugems/gpugems3/part-vi-gpu-computing/chapter-39-parallel-prefix-sum-scan-cuda}{Chapter 39. Parallel Prefix Sum (Scan) with CUDA}
+   \end{itemize}
+
+\end{document}

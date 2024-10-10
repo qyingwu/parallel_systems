@@ -11,7 +11,8 @@
 #include <ctime>
 #include <cmath>
 #include <cstdlib>
-
+#include <iomanip>
+#include <unordered_set>
 
 // (kmeans_srand and kmeans_rand) to generate initial random centroids
 static unsigned long int next = 1;
@@ -26,7 +27,18 @@ int kmeans_rand() {
     return (unsigned int)(next / 65536) % (kmeans_rmax + 1);
 }
 
-// Function to read input file into a vector of points
+int generate_random_index(int n_points) {
+    int limit = (kmeans_rmax + 1) - ((kmeans_rmax + 1) % n_points);
+    int random_value;
+    
+    do {
+        random_value = kmeans_rand();
+    } while (random_value >= limit);  // Reject values that would introduce bias
+
+    return random_value % n_points;
+}
+
+
 // Function to read input file into a vector of points
 std::vector<std::vector<double>> read_input_file(const std::string &filename, int dims) {
     std::ifstream infile(filename);
@@ -34,7 +46,7 @@ std::vector<std::vector<double>> read_input_file(const std::string &filename, in
         std::cerr << "Error opening file: " << filename << std::endl;
         exit(EXIT_FAILURE);
     }
-
+    //data vector of points to be used for kmeans
     std::vector<std::vector<double>> data;
     std::string line;
     while (std::getline(infile, line)) {
@@ -55,41 +67,41 @@ std::vector<std::vector<double>> read_input_file(const std::string &filename, in
     return data;
 }
 
-
-
-/// Initialize centroids using custom random number generation
+// Function to initialize centroids with seed provided by cmd line
+//randomly generate k integer numbers between 0 and num_points and 
+// use these k integers as indices of points used as initial centroids.
 void initialize_centroids(int k, const std::vector<std::vector<double>>& data, 
                           std::vector<std::vector<double>>& centroids, int seed) {
     int n_points = data.size();
+    kmeans_srand(seed); // Seed the random number generator
 
-    // Initialize the random seed using the provided seed (from cmdline argument)
-    kmeans_srand(seed);
+    if (k > n_points) {
+        std::cerr << "Error: The number of centroids (k) cannot be greater than the number of data points." << std::endl;
+        exit(EXIT_FAILURE);  // or handle by setting k = n_points;
+    }
 
-    // Select k random points as the initial centroids
-    std::vector<int> chosen_indices; // Keep track of chosen indices to avoid duplicates
-    for (int i = 0; i < k; ++i) {
-        int index;
-        do {
-            // Use kmeans_rand() to generate a random index
-            index = kmeans_rand() % n_points;
+    // Preallocate space for centroids
+    centroids.reserve(k);
 
-            // Add error checking to ensure the index is valid
-            if (index < 0 || index >= n_points) {
-                std::cerr << "Error: Invalid index generated for initial centroid." << std::endl;
-                exit(EXIT_FAILURE);
-            }
+    // Use unordered_set for O(1) duplicate checking
+    std::unordered_set<int> chosen_indices; 
 
-        } while (std::find(chosen_indices.begin(), chosen_indices.end(), index) != chosen_indices.end());
+    // Select k unique random points as centroids
+    while (centroids.size() < k) {
+        int index = kmeans_rand() % n_points;
         
-        centroids.push_back(data[index]); // Set the chosen point as a centroid
-        chosen_indices.push_back(index);  // Keep track of selected points
+        // Only add the index if it hasn't been used already
+        if (chosen_indices.find(index) == chosen_indices.end()) {
+            centroids.push_back(data[index]);  // Set the point as a centroid
+            chosen_indices.insert(index);     // Mark this index as used
+        }
     }
 }
 
 
-// Wrapper function to call the appropriate KMeans implementation (CPU, CUDA, or Thrust)
+// Wrapper function to call the appropriate KMeans implementation (CPU, CUDA gemem, CUDA shmem, or Thrust)
 void run_kmeans(int k, int dims, int max_iters, double threshold, bool output_centroids, int seed, 
-                bool use_cuda, bool use_thrust, bool use_cpu, const std::string &input_file) {
+                bool use_cuda_gmem, bool use_cuda_shmem, bool use_thrust, bool use_cpu, const std::string &input_file) {
 
     // Read input data from file
     std::vector<std::vector<double>> data = read_input_file(input_file, dims);
@@ -99,35 +111,42 @@ void run_kmeans(int k, int dims, int max_iters, double threshold, bool output_ce
     std::vector<int> labels(n_points, -1);
     std::vector<std::vector<double>> centroids;
 
-    // Measure elapsed time for KMeans
+    // Initialize centroids using custom random number generator and seed
+    initialize_centroids(k, data, centroids, seed);
+
+    // Start measuring the time
     auto start = std::chrono::high_resolution_clock::now();
 
-    int iterations_run = 0;
-
-    if (use_cuda) {
-        std::cout << "Running KMeans with CUDA..." << std::endl;
-        kmeans_cuda(k, dims, max_iters, threshold, data, labels, centroids, seed);
+    if (use_cuda_gmem) {
+        std::cout << "Running KMeans with CUDA gmem..." << std::endl;
+        kmeans_cuda_gmem(k, dims, max_iters, threshold, data, labels, centroids);
+    } else if (use_cuda_shmem) {
+        std::cout << "Running KMeans with CUDA shmem..." << std::endl;
+        kmeans_cuda_shmem(k, dims, max_iters, threshold, data, labels, centroids);
     } else if (use_thrust) {
         std::cout << "Running KMeans with Thrust..." << std::endl;
-        kmeans_thrust(k, dims, max_iters, threshold, data, labels, centroids, seed); 
+        kmeans_thrust(k, dims, max_iters, threshold, data, labels, centroids); 
     } else if (use_cpu) {
         std::cout << "Running KMeans with CPU..." << std::endl;
-        kmeans_cpu(k, dims, max_iters, threshold, data, labels, centroids, iterations_run, seed);
+        kmeans_cpu(k, dims, max_iters, threshold, data, labels, centroids);
     } else {
         std::cout << "Running KMeans with CPU..." << std::endl;
-        kmeans_cpu(k, dims, max_iters, threshold, data, labels, centroids, iterations_run, seed);
+        kmeans_cpu(k, dims, max_iters, threshold, data, labels, centroids);
     }
 
+    // End measuring the time
     auto end = std::chrono::high_resolution_clock::now();
 
     // Calculate time elapsed in milliseconds
     std::chrono::duration<double, std::milli> elapsed_time = end - start;
     double total_time = elapsed_time.count();
-    double time_per_iter = iterations_run > 0 ? total_time / iterations_run : total_time;
+    std::cout << "Total execution time: " << total_time << " ms" << std::endl;
 
     // Output results
+    int precision = 8; //default to 8
     if (output_centroids) {
         std::cout << "Final centroids:" << std::endl;
+        std::cout << std::fixed << std::setprecision(precision);  
         for (int cluster_id = 0; cluster_id < k; ++cluster_id) {
             std::cout << "Centroid " << cluster_id << ": ";
             for (int d = 0; d < dims; ++d) {
@@ -143,17 +162,6 @@ void run_kmeans(int k, int dims, int max_iters, double threshold, bool output_ce
         }
         std::cout << std::endl;
     }
-
-    if (use_cpu){
-        // Output the time and iterations
-        std::cout << "Iterations ran: " << iterations_run << std::endl;
-        std::cout << "Total time: " << total_time << " ms" << std::endl;
-        if (iterations_run > 0) {
-            std::cout << "Time per iteration: " << time_per_iter << " ms" << std::endl;
-        }
-
-    }
-    
 }
 
 
@@ -161,11 +169,12 @@ void run_kmeans(int k, int dims, int max_iters, double threshold, bool output_ce
 void run_kmeans_from_cli(int argc, char *argv[]) {
     // Command-line argument parsing
     int k = -1, dims = -1, max_iters = 150;
-    double threshold = 1e-4;
+    double threshold = 1e-8f;
     std::string input_file;
     bool output_centroids = false;
     int seed = 8675309;  // Default seed for random initialization
-    bool use_cuda = false;
+    bool use_cuda_gmem = false;
+    bool use_cuda_shmem = false;
     bool use_thrust = false;
     bool use_cpu = false;
 
@@ -185,9 +194,11 @@ void run_kmeans_from_cli(int argc, char *argv[]) {
             output_centroids = true;
         } else if (std::string(argv[i]) == "-s") {
             seed = std::atoi(argv[++i]);  // Seed passed from the command line
-        } else if (std::string(argv[i]) == "--use_cuda") {
-            use_cuda = true;
-        } else if (std::string(argv[i]) == "--use_thrust") {
+        } else if (std::string(argv[i]) == "--use_cuda_gmem") {
+            use_cuda_gmem = true;
+        } else if (std::string(argv[i]) == "--use_cuda_shmem") {
+            use_cuda_shmem = true;
+        }else if (std::string(argv[i]) == "--use_thrust") {
             use_thrust = true;
         } else if (std::string(argv[i]) == "--use_cpu") {
             use_cpu = true;
@@ -197,26 +208,9 @@ void run_kmeans_from_cli(int argc, char *argv[]) {
         }
     }
 
-    // Validate mandatory arguments
-    if (k == -1 || dims == -1 || input_file.empty()) {
-        std::cerr << "Usage: " << argv[0] << " -k num_clusters -d dims -i input_file [-m max_iters] [-t threshold] [-c] [-s seed] [--use_cuda] [--use_thrust]" << std::endl;
-        exit(EXIT_FAILURE);
-    }
-
-    // Start measuring the time
-    auto start_time = std::chrono::high_resolution_clock::now();
-
     // Call run_kmeans to run the chosen KMeans implementation
-    run_kmeans(k, dims, max_iters, threshold, output_centroids, seed, use_cuda, use_thrust, use_cpu, input_file);
-
-    // End measuring time
-    auto end_time = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double, std::milli> elapsed_time = end_time - start_time;
-
-    // Output time per iteration and number of iterations
-    std::cout << "Total time: " << elapsed_time.count() << " ms" << std::endl;
+    run_kmeans(k, dims, max_iters, threshold, output_centroids, seed, use_cuda_gmem, use_cuda_shmem, use_thrust, use_cpu, input_file);
 }
-
 
 // Main function is now inside kmeans.cpp
 int main(int argc, char *argv[]) {

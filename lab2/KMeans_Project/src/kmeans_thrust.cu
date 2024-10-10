@@ -1,4 +1,3 @@
-
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
 #include <thrust/copy.h>
@@ -18,7 +17,7 @@ __global__ void assign_points_to_centroids_thrust(const double* points, const do
         int best_centroid = 0;
 
         for (int c = 0; c < n_centroids; ++c) {
-            double dist = 0.0;
+            double dist = 0.0f;
             for (int d = 0; d < dims; ++d) {
                 double diff = points[idx * dims + d] - centroids[c * dims + d];
                 dist += diff * diff;
@@ -66,7 +65,7 @@ __global__ void calculate_centroid_differences(const double* old_centroids, cons
 // Function to run KMeans with CUDA kernels and convergence check
 void kmeans_thrust(int k, int dims, int max_iters, double threshold,
                    const std::vector<std::vector<double>>& data, 
-                   std::vector<int>& labels, std::vector<std::vector<double>>& centroids, int seed) {
+                   std::vector<int>& labels, std::vector<std::vector<double>>& centroids) {
 
     int n_points = data.size();
 
@@ -79,10 +78,7 @@ void kmeans_thrust(int k, int dims, int max_iters, double threshold,
     }
     thrust::device_vector<double> d_points = h_points;
 
-    // Initialize centroids using the provided seed
-    initialize_centroids(k, data, centroids, seed);
-
-    // Copy data to device, centroids
+    // Use the centroids passed in as input
     thrust::host_vector<double> h_centroids(k * dims);
     for (int i = 0; i < k; ++i) {
         for (int d = 0; d < dims; ++d) {
@@ -110,7 +106,7 @@ void kmeans_thrust(int k, int dims, int max_iters, double threshold,
         thrust::copy(d_centroids.begin(), d_centroids.end(), d_old_centroids.begin());
 
         // Reset centroids and counts
-        thrust::fill(d_centroids.begin(), d_centroids.end(), 0.0);
+        thrust::fill(d_centroids.begin(), d_centroids.end(), 0.0f);
         thrust::fill(d_counts.begin(), d_counts.end(), 0);
 
         // Compute new centroids
@@ -126,9 +122,8 @@ void kmeans_thrust(int k, int dims, int max_iters, double threshold,
         cudaDeviceSynchronize();
 
         // Check for convergence
-        total_difference = thrust::reduce(d_differences.begin(), d_differences.end(), 0.0, thrust::plus<double>());
+        total_difference = thrust::reduce(d_differences.begin(), d_differences.end(), 0.0f, thrust::plus<double>());
         double average_change = sqrt(total_difference) / (k * dims);
-        std::cout << "Total difference: " << total_difference << " Average change per centroid: " << average_change << std::endl;
         
         if (total_difference < threshold) {
             std::cout << "Convergence reached after iteration " << iter + 1 << std::endl;
