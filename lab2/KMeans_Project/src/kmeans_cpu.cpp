@@ -2,16 +2,33 @@
 #include "distance.hpp"
 #include <iostream>
 #include <vector>
+#include <algorithm>
 #include <cstdlib>
 #include <cmath>
 #include <limits>
 #include <ctime>
+#include <cmath> 
 
-// sequential CPU-based KMeans implementation
+// Helper function to find the closest centroid
+int find_closest_centroid(const std::vector<double>& point, const std::vector<std::vector<double>>& centroids) {
+    double min_dist = std::numeric_limits<double>::max();
+    int closest_centroid = -1;
+
+    for (int c = 0; c < centroids.size(); ++c) {
+        double dist = euclidean_distance(point, centroids[c]);
+        if (dist < min_dist) {
+            min_dist = dist;
+            closest_centroid = c;
+        }
+    }
+    return closest_centroid;
+}
+
+// Sequential CPU-based KMeans implementation
 void kmeans_cpu(int k, int dims, int max_iters, double threshold, const std::vector<std::vector<double>> &data, 
                 std::vector<int> &labels, std::vector<std::vector<double>> &centroids) {
-
     int n_points = data.size();
+    
     std::vector<std::vector<double>> new_centroids(k, std::vector<double>(dims, 0.0f));
     std::vector<int> cluster_sizes(k, 0);
     double total_shift = 0.0f;
@@ -21,17 +38,7 @@ void kmeans_cpu(int k, int dims, int max_iters, double threshold, const std::vec
 
         // Step 1: Assign each point to the nearest centroid
         for (int i = 0; i < n_points; ++i) {
-            double min_dist = std::numeric_limits<double>::max();
-            int closest_centroid = -1;
-
-            for (int c = 0; c < k; ++c) {
-                double dist = euclidean_distance(data[i], centroids[c]); // Use squared distance if needed
-                if (dist < min_dist) {
-                    min_dist = dist;
-                    closest_centroid = c;
-                }
-            }
-            labels[i] = closest_centroid;
+            labels[i] = find_closest_centroid(data[i], centroids);
         }
 
         // Step 2: Recalculate the centroids based on the assignments
@@ -55,18 +62,24 @@ void kmeans_cpu(int k, int dims, int max_iters, double threshold, const std::vec
             }
         }
 
-        // Step 3: Check for convergence
-        total_shift = 0.0f;
+        // Step 3: Check for convergence on a per-dimension basis
+        bool converged = true; 
+
         for (int c = 0; c < k; ++c) {
-            total_shift += euclidean_distance(centroids[c], new_centroids[c]); // Use squared distance if needed
+            for (int d = 0; d < dims; ++d) {
+                // Check the shift for each dimension
+                double dimension_shift = std::abs(centroids[c][d] - new_centroids[c][d]);
+                // Print the threshold and the difference (dimension_shift)
+                if (dimension_shift > threshold) {
+                    converged = false; // If any dimension exceeds the threshold, mark as not converged
+                }
+            }
         }
 
         centroids = new_centroids;
-
-        std::cout << "Iteration " << iter + 1 << ": Total Shift = " << total_shift << std::endl;
-
-        // Stop if the shift is smaller than the threshold
-        if (total_shift <= threshold) {
+        
+        // Stop if all dimensions for all centroids have converged
+        if (converged) {
             std::cout << "Converged in " << iter + 1 << " iterations." << std::endl;
             break;
         }

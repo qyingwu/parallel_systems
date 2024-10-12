@@ -29,7 +29,7 @@ void kmeans_cuda_shmem(int k, int dims, int max_iters, double threshold,
                  
 
 // Function to perform KMeans clustering using Thrust
-void kmeans_thrust(int k, int dims, int max_iters, double threshold,
+void kmeans_cuda_thrust(int k, int dims, int max_iters, double threshold,
                    const std::vector<std::vector<double>>& data, 
                    std::vector<int>& labels, std::vector<std::vector<double>>& centroids);
 

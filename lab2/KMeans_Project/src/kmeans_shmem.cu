@@ -9,18 +9,18 @@
 
 #define CHECK_CUDA_ERROR(err)     if (err != cudaSuccess) {         std::cerr << "CUDA Error: " << cudaGetErrorString(err) << std::endl;         exit(EXIT_FAILURE);     }
 
-// CUDA Kernels Implementation
 
+// CUDA Kernels Implementation
 __global__ void assign_points_to_centroids(const double* d_points, const double* d_centroids, int* d_labels, int num_points, int k, int dims) {
-    extern __shared__ double s_centroids[];
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    extern __shared__ double s_centroids[];// Shared memory for centroids
     int tid = threadIdx.x;
+    int idx = blockIdx.x * blockDim.x + tid;
 
     // Load centroids into shared memory
     for (int c = tid; c < k * dims; c += blockDim.x) {
         s_centroids[c] = d_centroids[c];
     }
-    __syncthreads();
+    __syncthreads(); // Synchronize threads before using shared memory
 
     if (idx < num_points) {
         double min_dist = INFINITY;
@@ -60,11 +60,11 @@ __global__ void compute_new_centroids(const double* d_points, const int* d_label
         for (int d = 0; d < dims; ++d) {
             atomicAdd(&sdata[cluster_id * dims + d], d_points[idx * dims + d]);
         }
-        atomicAdd(&d_cluster_sizes[cluster_id], 1);
+        atomicAdd(&d_cluster_sizes[cluster_id], 1);  // Global atomic for cluster sizes
     }
     __syncthreads();
 
-    // Write the shared memory results to global memory
+    // Write the shared memory results to global memory (one thread per block reduces contention)
     for (int i = tid; i < k * dims; i += blockDim.x) {
         atomicAdd(&d_centroids[i], sdata[i]);
     }
@@ -90,7 +90,7 @@ __global__ void compute_change(double* d_centroids, double* d_old_centroids, dou
     }
 }
 
-// Wrapper function for KMeans with CUDA shared memory
+// KMeans with CUDA shared memory
 void kmeans_cuda_shmem(int k, int dims, int max_iters, double threshold, const std::vector<std::vector<double>>& data,
                        std::vector<int>& labels, std::vector<std::vector<double>>& centroids) {
 
@@ -140,27 +140,35 @@ void kmeans_cuda_shmem(int k, int dims, int max_iters, double threshold, const s
     int numBlocks = (num_points + blockSize - 1) / blockSize;
     int sharedMemSize = k * dims * sizeof(double);
 
-    for (int iter = 0; iter < max_iters; ++iter) {
-        std::cout << "Running iteration " << iter + 1 << std::endl;
+    // Create CUDA events for timing
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
 
+    cudaEventRecord(start);  // Start recording time
+
+    for (int iter = 0; iter < max_iters; ++iter) {
+    
         // Assign points to centroids using shared memory
         assign_points_to_centroids<<<numBlocks, blockSize, sharedMemSize>>>(d_points, d_centroids, d_labels, num_points, k, dims);
-        CHECK_CUDA_ERROR(cudaDeviceSynchronize());
+        CHECK_CUDA_ERROR(cudaGetLastError());
 
-        // Reset cluster sizes and compute new centroids using shared memory reduction
+        // Reset centroids and cluster sizes before computing new centroids
+        cudaMemset(d_centroids, 0, k * dims * sizeof(double));
         cudaMemset(d_cluster_sizes, 0, k * sizeof(int));
+        
         compute_new_centroids<<<numBlocks, blockSize, sharedMemSize>>>(d_points, d_labels, d_centroids, d_cluster_sizes, num_points, k, dims);
-        CHECK_CUDA_ERROR(cudaDeviceSynchronize());
+        CHECK_CUDA_ERROR(cudaGetLastError());
 
         // Normalize centroids
         int total_threads = k * dims;
         normalize_centroids<<<(total_threads + blockSize - 1) / blockSize, blockSize>>>(d_centroids, d_cluster_sizes, k, dims);
-        CHECK_CUDA_ERROR(cudaDeviceSynchronize());
+        CHECK_CUDA_ERROR(cudaGetLastError());
 
         // Convergence check
         cudaMemset(d_change, 0, k * dims * sizeof(double));
         compute_change<<<(k * dims + blockSize - 1) / blockSize, blockSize>>>(d_centroids, d_old_centroids, d_change, k, dims);
-        CHECK_CUDA_ERROR(cudaDeviceSynchronize());
+        CHECK_CUDA_ERROR(cudaGetLastError());
 
         std::vector<double> h_change(k * dims);
         cudaMemcpy(h_change.data(), d_change, k * dims * sizeof(double), cudaMemcpyDeviceToHost);
@@ -189,6 +197,16 @@ void kmeans_cuda_shmem(int k, int dims, int max_iters, double threshold, const s
         cudaMemcpy(d_old_centroids, d_centroids, k * dims * sizeof(double), cudaMemcpyDeviceToDevice);
     }
 
+    cudaEventRecord(stop);  
+
+    // Wait for the stop event to complete
+    cudaEventSynchronize(stop);
+
+    // Calculate elapsed time in milliseconds
+    float milliseconds = 0;
+    cudaEventElapsedTime(&milliseconds, start, stop);
+    std::cout << "Total kernel execution time: " << milliseconds << " ms" << std::endl;
+
     // Copy final centroids and labels back to host
     cudaMemcpy(h_centroids.data(), d_centroids, k * dims * sizeof(double), cudaMemcpyDeviceToHost);
     cudaMemcpy(h_labels.data(), d_labels, num_points * sizeof(int), cudaMemcpyDeviceToHost);
@@ -210,4 +228,8 @@ void kmeans_cuda_shmem(int k, int dims, int max_iters, double threshold, const s
     cudaFree(d_cluster_sizes);
     cudaFree(d_change);
     cudaFree(d_old_centroids);
+
+    // Destroy the CUDA events
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
 }

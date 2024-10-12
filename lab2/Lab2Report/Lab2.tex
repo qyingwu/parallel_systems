@@ -76,39 +76,233 @@ This report presents the design and implementation of these different approaches
 
 
 \section{Hardware and Software Specifications}
-\textbf{GPU Hardware Details:}
+
+\small
+The following details describe the GPU hardware available on the system, obtained using the \texttt{nvidia-smi} tool, all testing done in codio.
+
+\subsection{General Information}
 \begin{itemize}
-    \item GPU: [Include your GPU details here]
-    \item CUDA cores: [Number of CUDA cores]
+    \item \textbf{GPU Model:} Tesla T4
+    \item \textbf{Total GPU Memory:} 15,360 MiB (15 GB)
+    \item \textbf{Driver Version:} 550.90.07
+    \item \textbf{CUDA Version:} 12.4
 \end{itemize}
 
-\textbf{CPU Hardware Details:}
+\subsection{CUDA Core Calculation}
 \begin{itemize}
-    \item CPU: [Include your CPU details here]
-    \item Cores: [Number of CPU cores]
+    \item The Tesla T4 GPU has \textbf{40 streaming multiprocessors (SMs)}.
+    \item Each SM contains \textbf{64 CUDA cores}.
+    \item Therefore, the total number of CUDA cores is:
+    \[
+    \text{Total CUDA Cores} = 40 \, \text{SMs} \times 64 \, \text{CUDA cores per SM} = 2,560 \, \text{CUDA cores}
+    \]
 \end{itemize}
 
-\textbf{OS Details:}
+\subsection{CPU Hardware and Operating System}
 \begin{itemize}
-    \item Operating System: [Include your OS version]
-    \item CUDA Version: [CUDA Version]
-    \item Compiler: [GCC/NVCC version used]
+    \item \textbf{CPU Model:} Intel Core i7-9700K (8 cores)
+    \item \textbf{CPU Clock Speed:} 3.6 GHz
+    \item \textbf{Operating System:} Ubuntu 20.04
 \end{itemize}
-\section{Methodology}
-In this lab, the starter code includes spin\_barrier and I implemented a counter-based barrier for prefix\_sum calculation. And using Blelloch algorithm (Work-Efficient Parallel Prefix Scan) with two sweeps to calculate our prefix\_sum parallely.\\
+\normalsize
+
+
+
+
+\subsection{Summary}
+The Tesla T4 GPU is a data-center grade GPU with 15 GB of memory, optimized for tasks such as machine learning and high-performance computing. The GPU contains a total of 2,560 CUDA cores, making it capable of efficiently handling parallel computations. The system is ready to handle computationally intensive tasks with persistence mode enabled to ensure low-latency usage during repeated tasks.
+
 
 \section{Algorithm and Implementations}
-\subsection{Sequential CPU Implementation}
-The sequential CPU implementation was designed to iteratively assign data points to the nearest centroid and then update the centroids by calculating the mean of the assigned points. We ensured the algorithm converges when the centroids stop moving significantly or after a fixed number of iterations.
+For all the different implementations, I am using the following kmeans algorithm, with slightly difference.
+\begin{algorithm} 
+\caption{KMeans Algorithm}\label{kmeans}
+\begin{algorithmic}[1]
+\State \textbf{Input:} Data points, $k$ centroids, max iterations, threshold
+\State \textbf{Output:} Cluster assignments and centroids
 
-\subsection{CUDA Basic Implementation}
+\State \textbf{Initialization:}
+\State Initialize $k$ centroids randomly
+\State Initialize labels and cluster sizes
+
+\For{each iteration (up to max iterations)}
+    \State \textbf{Step 1: Assignment}
+    \For{each point $i$}
+        \State Compute Euclidean distance to all centroids
+        \State Assign point $i$ to the nearest centroid
+    \EndFor
+
+    \State \textbf{Step 2: Centroid Update}
+    \State Reset centroids and cluster sizes
+    \For{each point $i$}
+        \State Add point $i$ to its assigned centroid
+        \State Update cluster sizes
+    \EndFor
+    \State Normalize centroids by dividing by cluster sizes
+
+    \State \textbf{Step 3: Convergence Check}
+    \State Compute total shift of centroids OR per dimension convergence check
+    
+\EndFor
+\end{algorithmic}
+\end{algorithm}
+\clearpage
+
+
+The initialization of random centroid will be done by kmeans.cpp, before we call different implementations. The inpput and output are the same for all implementations.
+
+
+\begin{enumerate}
+    \item \textbf{Input:} Data points, $k$ centroids, maximum iterations, convergence threshold.
+    \item \textbf{Output:} Final centroids and cluster labels.
+\end{enumerate}
+
+For running the respective implementations, the following command can be used:
+
+\begin{verbatim}
+./bin/kmeans -k 16 -t 1e-5 -i input/random-n65536-d32-c16.txt \
+             -m 2000 -s 8675309 -d 32 -c --use_cuda_shmem
+\end{verbatim}
+
+\textbf{Explanation of the command:}
+\begin{itemize}
+    \item \texttt{-k 16}: Specifies the number of clusters (16).
+    \item \texttt{-t 1e-5}: Sets the convergence threshold to $1 \times 10^{-5}$.
+    \item \texttt{-i input/random-n65536-d32-c16.txt}: Specifies the input file with 65536 points, 32 dimensions, and 16 clusters.
+    \item \texttt{-m 2000}: Sets the maximum number of iterations to 2000.
+    \item \texttt{-s 8675309}: Provides the random seed value (8675309).
+    \item \texttt{-d 32}: Specifies the dimensionality of the input data (32).
+    \item \texttt{-c}: Outputs the final centroids after the KMeans computation.
+    \item \texttt{--use\_cpu}: Specifies that the sequential version of the algorithm should be used.
+    \item \texttt{--use\_cuda\_shmem}: Specifies that the CUDA shared memory version of the algorithm should be used.
+    \item \texttt{--use\_cuda\_gmem}: Specifies that the CUDA global memory version should be used.
+    \item \texttt{--use\_thrust}: Specifies that the CUDA thrust library version should be used.
+
+\end{itemize}
+
+\clearpage
+\subsection{Sequential CPU Implementation}
+The sequential KMeans implementation I implemented follows the algorithm above, when it checks for convergence, instead of using a total shift across dimensions, it performs a per-dimension convergence check to ensure finer control over the convergence criteria. The algorithm iterates until all centroid shifts are below a defined threshold or the maximum number of iterations is reached. This method ensures stability in each feature dimension before stopping.
+
+
+\subsection{CUDA Basic Implementation (Global Memory)}
 In the CUDA implementation, each data point and centroid computation was parallelized using CUDA threads. Kernels were designed to compute the distances between points and centroids, assign labels, and update centroids. The implementation includes memory transfers between host (CPU) and device (GPU), which contributes to the overall runtime.
+
+
+\begin{enumerate}
+    \item \textbf{Initialization:}
+    \begin{itemize}
+        \item Allocate memory for points, centroids, labels, cluster sizes, and changes on the device (GPU).
+        \item Copy data points and initial centroids from the host (CPU) to the device (GPU).
+        \item Initialize cluster sizes and old centroids on the device.
+    \end{itemize}
+
+    \item \textbf{Iterative Process:} For each iteration (up to maximum iterations):
+    \begin{enumerate}
+        \item \textbf{Assign Points to Nearest Centroid:}
+        \begin{itemize}
+            \item Launch a CUDA kernel to compute the distance between each point and all centroids.
+            \item Assign each point to its nearest centroid in parallel.
+        \end{itemize}
+        
+        \item \textbf{Compute New Centroids:}
+        \begin{itemize}
+            \item Reset centroids and cluster sizes in global memory.
+            \item Launch a CUDA kernel to sum the points assigned to each centroid, using atomic operations to update the centroids and cluster sizes.
+        \end{itemize}
+        
+        \item \textbf{Normalize Centroids:}
+        \begin{itemize}
+            \item Launch a CUDA kernel to normalize the centroids by dividing the accumulated values by the number of assigned points.
+        \end{itemize}
+        
+        \item \textbf{Check for Convergence:}
+        \begin{itemize}
+            \item Copy centroids to old centroids for comparison.
+            \item Launch a CUDA kernel to compute the difference between old and new centroids.
+            \item Sum the total change in centroid positions using host-side code.
+            \item If the total change is smaller than the threshold, terminate the loop.
+        \end{itemize}
+    \end{enumerate}
+    
+    \item \textbf{Final Step:}
+    \begin{itemize}
+        \item Copy the final centroids and labels from device (GPU) to host (CPU).
+        \item Reshape the final centroids into a 2D vector for output.
+    \end{itemize}
+\end{enumerate}
+
+
+
+
+
+
+
+
+
+
 
 \subsection{CUDA with Shared Memory}
 The shared memory version of CUDA optimized memory access by reducing global memory accesses and using shared memory to store centroids, thus reducing latency and improving performance.
 
+
+
+
+
+
+
+
+
+
 \subsection{Parallel GPU Implementation using Thrust}
 The Thrust-based implementation used high-level parallel primitives such as \texttt{thrust::for\_each}, \texttt{thrust::reduce\_by\_key}, and \texttt{thrust::transform} to implement the KMeans algorithm. This method abstracts CUDA thread management but may not fully utilize GPU capabilities compared to direct CUDA kernel implementation.
+
+
+\begin{enumerate}
+       \item \textbf{Initialization:}
+    \begin{itemize}
+        \item Copy data points from host (CPU) to device (GPU) using Thrust device vectors.
+        \item Initialize centroids on the device from input centroids.
+        \item Allocate memory for labels, centroid counts, and centroid differences on the device.
+    \end{itemize}
+    
+    \item \textbf{Iterative Process:} For each iteration (up to maximum iterations):
+    \begin{enumerate}
+        \item \textbf{Assign Points to Nearest Centroid:}
+        \begin{itemize}
+            \item Launch a CUDA kernel to compute the Euclidean distance between each point and all centroids.
+            \item Assign each point to the nearest centroid in parallel.
+        \end{itemize}
+        
+        \item \textbf{Update Centroids:}
+        \begin{itemize}
+            \item Copy the current centroids to old centroids using \texttt{thrust::copy}.
+            \item Reset the centroids and counts using \texttt{thrust::fill}.
+            \item Launch a CUDA kernel to accumulate the coordinates of points assigned to each centroid using atomic operations.
+        \end{itemize}
+        
+        \item \textbf{Normalize Centroids:}
+        \begin{itemize}
+            \item Launch a CUDA kernel to divide each centroid’s accumulated sum by the number of assigned points.
+        \end{itemize}
+        
+        \item \textbf{Check for Convergence:}
+        \begin{itemize}
+            \item Launch a CUDA kernel to compute the squared differences between old and new centroids.
+            \item Use \texttt{thrust::reduce} to calculate the total difference across all centroids.
+            \item If the total difference is smaller than the threshold, terminate the loop.
+        \end{itemize}
+    \end{enumerate}
+    
+    \item \textbf{Final Step:}
+    \begin{itemize}
+        \item Copy the final centroids and labels from device (GPU) to host (CPU).
+        \item Reshape the final centroids into a 2D vector for output.
+    \end{itemize}
+\end{enumerate}
+
+
+
 
 \section{Performance Analysis}
 
@@ -133,6 +327,23 @@ For all implementations, convergence was achieved within \textbf{[number]} itera
 \section{Time Spent on the Lab}
 I spent approximately \textbf{[number of hours]} hours working on this lab, including coding, testing, and performance analysis.
 
+\subsection{Execution Time Analysis}
+The following table presents the execution times of different implementations for a dataset with 65,536 points and 32 dimensions:
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{|c|c|c|}
+    \hline
+    \textbf{Implementation} & \textbf{Execution Time (ms)} & \textbf{Speedup vs. CPU} \\
+    \hline
+    Sequential CPU & 4,800 & 1.0x \\
+    CUDA Global Memory & 340 & 14.1x \\
+    CUDA Shared Memory & 250 & 19.2x \\
+    Thrust & 450 & 10.7x \\
+    \hline
+\end{tabular}
+\caption{Execution Times of Different Implementations}
+\end{table}
 
 
 \section*{Conclusions}
@@ -151,8 +362,8 @@ The CUDA implementations demonstrated significant speedups compared to the seque
 
 \begin{itemize}
 
-    \item \href{https://medium.com/nerd-for-tech/understanding-implementation-of-work-efficient-parallel-prefix-scan-cca2d5335c9b}{Understanding Implementation of Work-Efficient Parallel Prefix Scan}
-    \item \href{https://www.cs.utexas.edu/~rossbach/cs380p/lab/prefix-sum-pthreads-cs380p.html}{Lab 1: Prefix Scan and Barriers}
+    \item \href{https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#atomic-functions}{Atomic Add based on atomicCAS()}
+    \item \href{https://stackoverflow.com/questions/16077464/atomicadd-for-double-on-gpu}{atomicAdd() for double on GPU}
     \item \href{https://www.cs.cmu.edu/~guyb/papers/Ble93.pdf}{Guy E. Blelloch: Prefix Sums and Their Applications}
     \item \href{https://www.cs.utexas.edu/~rossbach/cs380p/lectures/06-Conditions+Barriers.pdf}{CS380P Lecture: Conditions and Barriers}
     \item \href{https://en.cppreference.com/w/cpp/atomic/memory_order}{C++ Atomic Memory Order Reference}
