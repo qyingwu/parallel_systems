@@ -1,0 +1,152 @@
+%To compile, run the following command:
+%   latexmk -pdf latex_template.tex 
+%
+% To edit, you can use your favorite text editor or LaTeX editors such as:
+%   Texmaker and TeXworks.
+%
+% To set up your own TeX system, you can install TeX Live. See:
+% https://www.tug.org/texlive/
+
+
+% For a recent install of texlive on Ubuntu 18.04 that is adequate for
+% compiling this file, I used the following commands:
+%
+% sudo apt install texlive-latex-base
+% sudo apt install texlive-latex-extra
+% sudo apt install texlive-science
+
+\documentclass[letterpaper,12pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amsthm,amsfonts,amssymb}
+\usepackage{mathtools}
+\usepackage{algorithm,algpseudocode}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage{array}
+\usepackage{subcaption}
+
+\theoremstyle{remark}
+\newtheorem{claim}{Claim}
+
+\DeclarePairedDelimiter\abs{\lvert}{\rvert}
+\DeclarePairedDelimiter\floor{\lfloor}{\rfloor}
+\DeclarePairedDelimiter\ceiling{\lceil}{\rceil}
+
+\begin{document}
+
+\title{Lab 3: BST Comparison: \\
+\large 
+Performance analysis and detailed approach
+   }
+
+
+\date{\today}
+\author{Qiying Wu}
+\maketitle
+
+
+
+
+
+\section*{Abstract }
+
+ In this lab, we explore the concurrent computation of binary search tree (BST) hashes and tree comparison using Go's concurrency tools, specifically goroutines, channels, and synchronization primitives. The goal is to optimize the processes of hashing, identifying duplicate hash groups, and performing pairwise tree comparisons to achieve high efficiency while maintaining accuracy. Each BST is represented by a unique hash generated from an in-order traversal using a custom hashing function. Multiple configurations of worker threads handle hash computation and map updates, providing insights into the impact of parallelism on performance. This report evaluates the scalability of different parallelization approaches across several worker configurations, with a focus on balancing computational and synchronization overhead.
+ 
+\section*{Introduction }
+Binary Search Trees (BSTs) are a fundamental data structure in computer science, used extensively in applications requiring efficient data retrieval and organization. This lab focuses on implementing a parallelized approach to compare BSTs using a custom hash-based methodology. Given a set of BSTs, we aim to compute a unique hash for each tree using an in-order traversal, group trees with identical hashes, and further compare these groups to identify structurally identical trees. Leveraging Go’s concurrency model, the implementation employs goroutines and channels for inter-process communication and synchronization mechanisms such as mutexes and semaphores to ensure data consistency during concurrent hash computations and updates.
+
+The lab is structured in three parts:
+\begin{itemize}
+ \item \textbf{Hash Computation}: We compute the hash of each BST in parallel by spawning a designated number of worker goroutines, based on the -hash-workers flag. This step evaluates the efficiency of parallel hash computation and measures the time taken to generate hashes for all BSTs.
+
+ \item \textbf{Hash Grouping}: Trees with identical hashes are grouped to identify potential duplicates. Different configurations of data worker goroutines are managed by the -data-workers flag to control access to the map holding hash groups. This part evaluates synchronization overhead and seeks to balance hash computation with data aggregation.
+
+ \item \textbf{Tree Comparison}: For each group with duplicate hashes, tree comparisons are performed in parallel using -comp-workers. This step refines the grouping by identifying structurally identical trees, based on a pairwise comparison strategy.
+
+The experimental setup uses multiple input files with varying BST complexities to analyze the performance of each concurrent approach. The results are assessed for both correctness and performance under different configurations, providing insights into how concurrency levels and synchronization impact the speed and scalability of BST hashing and comparison.
+\end{itemize}
+
+This report presents the design and implementation of these different approaches, along with performance analyses based on their execution times for various datasets. We also discuss the challenges encountered during the optimization process, including memory management and non-deterministic behavior caused by atomic operations in CUDA. By comparing the performance of these implementations, we aim to highlight the trade-offs between different levels of abstraction in GPU programming and the impact of hardware-level optimizations on the performance of parallel algorithms like KMeans.
+
+
+
+\section*{Background and Hashing Methodology}
+\subsection{Binary Search Tree Structure}
+
+
+
+\subsection{Hash Computation Method}
+% Explanation of the hash function using in-order 
+
+
+      
+
+
+\section*{Implementation}
+\subsection{Hash Computation}
+\subsubsection{Sequential Hash Computation}
+% Describe the single-threaded hash calculation as a baseline.
+\subsubsection{Parallel Hash Computation}
+% Describe the use of `-hash-workers` flag and the configuration of worker goroutines.
+\subsection{Hash Grouping}
+\subsubsection{Sequential Hash Grouping}
+% Describe single-threaded grouping of hashes.
+\subsubsection{Parallel Hash Grouping}
+% Description of the use of `-data-workers` flag and synchronization mechanisms (channels, mutexes).
+\subsection{Tree Comparison}
+\subsubsection{Sequential Tree Comparison}
+% Describe single-threaded tree comparison.
+\subsubsection{Parallel Tree Comparison}
+% Explanation of parallel tree comparison using `-comp-workers` and goroutines.
+
+
+
+
+
+\section*{Experimental Setup}
+\subsection{Input Data and Flags}
+% Description of datasets (simple.txt, coarse.txt, fine.txt) and flags used for different implementations.
+\subsection{Performance Metrics}
+% Metrics used for evaluation (time measurements for hash, hash grouping, and tree comparison steps).
+
+\section{Results and Analysis}
+\subsection{Performance Analysis}
+\subsubsection{Hash Computation Time}
+% Performance comparison across various `-hash-workers` settings.
+\subsubsection{Hash Grouping Time}
+% Analysis of hash grouping time for different `-data-workers` settings.
+\subsubsection{Tree Comparison Time}
+% Comparison of tree comparison time for different `-comp-workers` configurations.
+\subsection{Correctness Verification}
+% Results of output validation and correctness checks against reference data.
+
+\section*{Discussion}
+% Discussion of concurrency trade-offs, synchronization overhead, and observed performance trends. Analysis of where parallelism was most effective and limitations encountered.
+
+\section*{Conclusion}
+% Summary of findings, key takeaways on parallel BST comparison, and potential improvements.
+
+\section{*Performance Analysis}
+
+ 
+\subsection*{Speedup Graphs}
+I will be using the total execution time for analysis, here's a cleaned up table for the total execution time without iteration data, and I will use threshold 1e-5.
+
+
+\section*{References}
+
+
+\subsection*{Technical Sources:}
+
+\begin{itemize}
+
+    \item \href{https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#atomic-functions}{Atomic Add based on atomicCAS()}
+    \item \href{https://stackoverflow.com/questions/16077464/atomicadd-for-double-on-gpu}{atomicAdd() for double on GPU}
+     \end{itemize}
+
+\end{document}
+
+

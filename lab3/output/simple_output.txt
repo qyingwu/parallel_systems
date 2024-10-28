@@ -1,0 +1,11 @@
+hashTime: 0.00006800
+Equivalent tree groups (by hash):
+111: 10 11
+428: 1 2 3 8
+793: 4 9
+441: 5 7
+hashGroupTime: 0.00002763
+group 0: 1 2 3 8
+group 1: 4 9
+group 2: 5 7
+compareTreeTime: 0.00002608
