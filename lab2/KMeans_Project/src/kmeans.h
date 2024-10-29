@@ -13,25 +13,25 @@ void initialize_centroids(int k, const std::vector<std::vector<double>>& data,
 void kmeans_cpu(int k, int dims, int max_iters, double threshold,
                 const std::vector<std::vector<double>>& data,
                 std::vector<int>& labels,
-                std::vector<std::vector<double>>& centroids);
+                std::vector<std::vector<double>>& centroids, int& actual_iters);
 
 // Function to perform KMeans clustering using CUDA gmem
 void kmeans_cuda_gmem(int k, int dims, int max_iters, double threshold,
                  const std::vector<std::vector<double>>& data,
                  std::vector<int>& labels,
-                 std::vector<std::vector<double>>& centroids);
+                 std::vector<std::vector<double>>& centroids, int& actual_iters);
 
 // Function to perform KMeans clustering using CUDA shmem
 void kmeans_cuda_shmem(int k, int dims, int max_iters, double threshold,
                  const std::vector<std::vector<double>>& data,
                  std::vector<int>& labels,
-                 std::vector<std::vector<double>>& centroids);
+                 std::vector<std::vector<double>>& centroids, int& actual_iters);
                  
 
 // Function to perform KMeans clustering using Thrust
 void kmeans_cuda_thrust(int k, int dims, int max_iters, double threshold,
                    const std::vector<std::vector<double>>& data, 
-                   std::vector<int>& labels, std::vector<std::vector<double>>& centroids);
+                   std::vector<int>& labels, std::vector<std::vector<double>>& centroids, int& actual_iters);
 
 // Function to read input file into a vector of points
 std::vector<std::vector<double>> read_input_file(const std::string& filename, int dims);

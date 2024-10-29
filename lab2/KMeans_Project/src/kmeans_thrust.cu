@@ -66,7 +66,7 @@ __global__ void calculate_centroid_differences(const double* old_centroids, cons
 // Function to run KMeans with CUDA kernels and convergence check, with event timing
 void kmeans_cuda_thrust(int k, int dims, int max_iters, double threshold,
                    const std::vector<std::vector<double>>& data, 
-                   std::vector<int>& labels, std::vector<std::vector<double>>& centroids) {
+                   std::vector<int>& labels, std::vector<std::vector<double>>& centroids, int& actual_iters) {
 
     int n_points = data.size();
 
@@ -99,9 +99,9 @@ void kmeans_cuda_thrust(int k, int dims, int max_iters, double threshold,
     cudaEventCreate(&stop);
 
     cudaEventRecord(start);  // Start recording time
-
+    actual_iters = 0;
     for (int iter = 0; iter < max_iters; ++iter) {
-        
+        actual_iters = iter + 1;
         int blocks = (n_points + 255) / 256;
 
         // Assign points to centroids
@@ -146,7 +146,7 @@ void kmeans_cuda_thrust(int k, int dims, int max_iters, double threshold,
         }
 
         if (converged) {
-            std::cout << "Convergence reached after iteration " << iter + 1 << std::endl;
+            //std::cout << "Convergence reached after iteration " << iter + 1 << std::endl;
             break;
         }
     }
@@ -159,7 +159,7 @@ void kmeans_cuda_thrust(int k, int dims, int max_iters, double threshold,
     // Calculate elapsed time in milliseconds
     float milliseconds = 0;
     cudaEventElapsedTime(&milliseconds, start, stop);
-    std::cout << "Total kernel execution time: " << milliseconds << " ms" << std::endl;
+    //std::cout << "Total kernel execution time: " << milliseconds << " ms" << std::endl;
 
     // Destroy CUDA events
     cudaEventDestroy(start);

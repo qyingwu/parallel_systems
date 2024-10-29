@@ -26,14 +26,15 @@ int find_closest_centroid(const std::vector<double>& point, const std::vector<st
 
 // Sequential CPU-based KMeans implementation
 void kmeans_cpu(int k, int dims, int max_iters, double threshold, const std::vector<std::vector<double>> &data, 
-                std::vector<int> &labels, std::vector<std::vector<double>> &centroids) {
+                std::vector<int> &labels, std::vector<std::vector<double>> &centroids, int& actual_iters) {
     int n_points = data.size();
     
     std::vector<std::vector<double>> new_centroids(k, std::vector<double>(dims, 0.0f));
     std::vector<int> cluster_sizes(k, 0);
     double total_shift = 0.0f;
-
+    actual_iters = 0;  // Initialize actual iterations
     for (int iter = 0; iter < max_iters; ++iter) {
+        actual_iters = iter+1;
         total_shift = 0.0f;
 
         // Step 1: Assign each point to the nearest centroid
@@ -80,7 +81,7 @@ void kmeans_cpu(int k, int dims, int max_iters, double threshold, const std::vec
         
         // Stop if all dimensions for all centroids have converged
         if (converged) {
-            std::cout << "Converged in " << iter + 1 << " iterations." << std::endl;
+            //std::cout << "Converged in " << iter + 1 << " iterations." << std::endl;
             break;
         }
     }

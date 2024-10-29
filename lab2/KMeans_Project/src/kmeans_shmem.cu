@@ -92,7 +92,7 @@ __global__ void compute_change(double* d_centroids, double* d_old_centroids, dou
 
 // KMeans with CUDA shared memory
 void kmeans_cuda_shmem(int k, int dims, int max_iters, double threshold, const std::vector<std::vector<double>>& data,
-                       std::vector<int>& labels, std::vector<std::vector<double>>& centroids) {
+                       std::vector<int>& labels, std::vector<std::vector<double>>& centroids, int& actual_iters) {
 
     int num_points = data.size();
     double* d_points;
@@ -146,9 +146,9 @@ void kmeans_cuda_shmem(int k, int dims, int max_iters, double threshold, const s
     cudaEventCreate(&stop);
 
     cudaEventRecord(start);  // Start recording time
-
+    actual_iters = 0;  // Initialize actual iterations
     for (int iter = 0; iter < max_iters; ++iter) {
-    
+    actual_iters = iter+1;
         // Assign points to centroids using shared memory
         assign_points_to_centroids<<<numBlocks, blockSize, sharedMemSize>>>(d_points, d_centroids, d_labels, num_points, k, dims);
         CHECK_CUDA_ERROR(cudaGetLastError());
@@ -189,7 +189,7 @@ void kmeans_cuda_shmem(int k, int dims, int max_iters, double threshold, const s
         }
 
         if (converged) {
-            std::cout << "Converged at iteration " << iter + 1 << std::endl;
+            //std::cout << "Converged at iteration " << iter + 1 << std::endl;
             break;
         }
 
@@ -205,7 +205,7 @@ void kmeans_cuda_shmem(int k, int dims, int max_iters, double threshold, const s
     // Calculate elapsed time in milliseconds
     float milliseconds = 0;
     cudaEventElapsedTime(&milliseconds, start, stop);
-    std::cout << "Total kernel execution time: " << milliseconds << " ms" << std::endl;
+    //std::cout << "Total kernel execution time: " << milliseconds << " ms" << std::endl;
 
     // Copy final centroids and labels back to host
     cudaMemcpy(h_centroids.data(), d_centroids, k * dims * sizeof(double), cudaMemcpyDeviceToHost);
