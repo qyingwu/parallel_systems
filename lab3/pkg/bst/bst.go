@@ -8,12 +8,11 @@ type TreeNode struct {
 	Parent *TreeNode
 }
 
-// In bst/bst.go, add a field to store the in-order traversal result
 type BinarySearchTree struct {
 	Id               int
 	Root             *TreeNode
 	Hash             int
-	InOrderTraversal []int // New field to store in-order traversal values
+	InOrderTraversal []int
 }
 
 func insertIntoBST(bst *BinarySearchTree, val int) *TreeNode {

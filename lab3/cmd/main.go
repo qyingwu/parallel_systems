@@ -14,7 +14,6 @@ import (
 	"time"
 )
 
-// Command-line flags
 var (
 	hashWorkers int
 	dataWorkers int
@@ -31,6 +30,7 @@ func init() {
 
 func main() {
 	flag.Parse()
+
 	data, err := os.ReadFile(inputFile)
 	if err != nil {
 		log.Fatalf("Failed to read input file: %v", err)
@@ -60,7 +60,7 @@ func main() {
 		hash2bstId = mutexImpl(bstList, hashWorkers, dataWorkers)
 	} else if hashWorkers > dataWorkers && dataWorkers > 1 {
 		// Case 4 (Optional): i hash workers, j data workers with fine-grained control
-		hash2bstId = shardedImpl(bstList, hashWorkers, dataWorkers)
+		hash2bstId = semaphoreImpl(bstList, hashWorkers, dataWorkers)
 	} else {
 		log.Fatalf("Invalid combination of hash-workers and data-workers")
 	}
@@ -68,12 +68,15 @@ func main() {
 	hashTime := time.Since(startHash).Seconds()
 	fmt.Printf("hashTime: %.8f\n", hashTime)
 
-	// Print hashes with associated BST IDs (excluding single-tree groups)
+	// Print hashes with associated BST IDs
+	startGroup := time.Now()
 	for hash, ids := range hash2bstId {
 		if len(ids) > 1 {
 			fmt.Printf("%d: %s\n", hash, joinIntSlice(ids, " "))
 		}
 	}
+	hashGroupTime := time.Since(startGroup).Seconds()
+	fmt.Printf("hashGroupTime: %.8f\n", hashGroupTime)
 
 	// Step 3: Parallelize tree comparisons
 	startCompare := time.Now()
@@ -94,35 +97,77 @@ func main() {
 			}
 		}
 	} else {
-		// Parallel comparison with multiple workers
-		compCh := make(chan [2]int, len(hash2bstId)*len(bstList))
-		var wgComp sync.WaitGroup
-		for i := 0; i < compWorkers; i++ {
-			wgComp.Add(1)
-			go func() {
-				defer wgComp.Done()
-				for pair := range compCh {
-					id1, id2 := pair[0], pair[1]
-					isEqual := equivalence.CompareBST(bstList[id1], bstList[id2])
-					if isEqual {
-						uf.Union(id1, id2)
-					}
-				}
-			}()
-		}
+		// parallel comparison with buffering and chunking
+		var comparisons [][2]int
+		totalTrees := len(bstList)
 
+		// Pre-allocate the comparisons slice with calculated capacity
+		maxComparisons := 0
+		for _, ids := range hash2bstId {
+			n := len(ids)
+			if n > 1 {
+				maxComparisons += (n * (n - 1)) / 2
+			}
+		}
+		comparisons = make([][2]int, 0, maxComparisons)
+
+		// Collect all comparisons needed
 		for _, ids := range hash2bstId {
 			if len(ids) > 1 {
 				for i := 0; i < len(ids); i++ {
 					for j := i + 1; j < len(ids); j++ {
-						compCh <- [2]int{ids[i], ids[j]}
+						comparisons = append(comparisons, [2]int{ids[i], ids[j]})
 					}
 				}
 			}
 		}
 
-		close(compCh)
+		// Dynamically calculate optimal chunk size based on number of workers and comparisons
+		chunkSize := max(100, len(comparisons)/(compWorkers*4))
+		numChunks := (len(comparisons) + chunkSize - 1) / chunkSize
+		chunks := make(chan [][2]int, numChunks)
+
+		// Split comparisons into chunks
+		for i := 0; i < len(comparisons); i += chunkSize {
+			end := min(i+chunkSize, len(comparisons))
+			chunks <- comparisons[i:end]
+		}
+		close(chunks)
+
+		// Use a sharded UnionFind to reduce lock contention
+		shardedUF := make([]*ufs.UnionFind, compWorkers)
+		for i := range shardedUF {
+			shardedUF[i] = ufs.NewUnionFind(totalTrees)
+		}
+
+		// Process chunks in parallel with local UnionFind instances
+		var wgComp sync.WaitGroup
+		for i := 0; i < compWorkers; i++ {
+			wgComp.Add(1)
+			workerID := i
+			go func() {
+				defer wgComp.Done()
+				localUF := shardedUF[workerID]
+				for chunk := range chunks {
+					for _, pair := range chunk {
+						id1, id2 := pair[0], pair[1]
+						if equivalence.CompareBST(bstList[id1], bstList[id2]) {
+							localUF.Union(id1, id2)
+						}
+					}
+				}
+			}()
+		}
 		wgComp.Wait()
+
+		// Merge results from all shards
+		for i := 1; i < len(shardedUF); i++ {
+			for j := 0; j < totalTrees; j++ {
+				if shardedUF[i].Find(j) != j {
+					uf.Union(j, shardedUF[i].Find(j))
+				}
+			}
+		}
 	}
 
 	compareTreeTime := time.Since(startCompare).Seconds()
@@ -176,12 +221,10 @@ func sequentialImpl(bstList []*bst.BinarySearchTree) map[int][]int {
 // channel-based implementation
 func channelImpl(bstList []*bst.BinarySearchTree, hashWorkers, dataWorkers int) map[int][]int {
 	hash2bstId := make(map[int][]int)
-	hashLocks := make(map[int]*sync.Mutex)
-	var hashLocksMu sync.Mutex
-
 	taskCh := make(chan int, len(bstList))
-	resultCh := make(chan [2]int, len(bstList))
+	resultCh := make(chan [2]int, hashWorkers)
 
+	// Start hash workers
 	var hashWg sync.WaitGroup
 	for i := 0; i < hashWorkers; i++ {
 		hashWg.Add(1)
@@ -190,18 +233,12 @@ func channelImpl(bstList []*bst.BinarySearchTree, hashWorkers, dataWorkers int) 
 			for idx := range taskCh {
 				tree := bstList[idx]
 				tree.Hash = equivalence.ComputeHash(tree)
-
-				hashLocksMu.Lock()
-				if _, exists := hashLocks[tree.Hash]; !exists {
-					hashLocks[tree.Hash] = &sync.Mutex{}
-				}
-				hashLocksMu.Unlock()
-
 				resultCh <- [2]int{idx, tree.Hash}
 			}
 		}()
 	}
 
+	// Start data workers
 	var mapWg sync.WaitGroup
 	for i := 0; i < dataWorkers; i++ {
 		mapWg.Add(1)
@@ -209,20 +246,16 @@ func channelImpl(bstList []*bst.BinarySearchTree, hashWorkers, dataWorkers int) 
 			defer mapWg.Done()
 			for result := range resultCh {
 				idx, hash := result[0], result[1]
-				hashLocksMu.Lock()
-				var hashLock = hashLocks[hash]
-				hashLocksMu.Unlock()
-
-				hashLock.Lock()
 				hash2bstId[hash] = append(hash2bstId[hash], idx)
-				hashLock.Unlock()
 			}
 		}()
 	}
 
+	// Send tasks to hash workers
 	for i := 0; i < len(bstList); i++ {
 		taskCh <- i
 	}
+
 	close(taskCh)
 	hashWg.Wait()
 	close(resultCh)
@@ -253,7 +286,6 @@ func mutexImpl(bstList []*bst.BinarySearchTree, hashWorkers, dataWorkers int) ma
 		}()
 	}
 
-	// Send tasks
 	for i := 0; i < len(bstList); i++ {
 		tasks <- i
 	}
@@ -263,7 +295,7 @@ func mutexImpl(bstList []*bst.BinarySearchTree, hashWorkers, dataWorkers int) ma
 	return hash2bstId
 }
 
-// Sharded mutex implementation
+// Sharded map structure with fine-grained locking on each shard
 type ShardedMap struct {
 	shards    []map[int][]int
 	locks     []sync.Mutex
@@ -271,28 +303,32 @@ type ShardedMap struct {
 }
 
 func NewShardedMap(numShards int) *ShardedMap {
-	sm := &ShardedMap{
-		shards:    make([]map[int][]int, numShards),
-		locks:     make([]sync.Mutex, numShards),
+	shards := make([]map[int][]int, numShards)
+	locks := make([]sync.Mutex, numShards)
+	for i := range shards {
+		shards[i] = make(map[int][]int)
+	}
+	return &ShardedMap{
+		shards:    shards,
+		locks:     locks,
 		numShards: numShards,
 	}
-	for i := range sm.shards {
-		sm.shards[i] = make(map[int][]int)
-	}
-	return sm
 }
 
+// getShard returns the shard index based on the hash
 func (sm *ShardedMap) getShard(hash int) int {
 	return hash % sm.numShards
 }
 
 func (sm *ShardedMap) Append(hash, value int) {
-	shard := sm.getShard(hash)
-	sm.locks[shard].Lock()
-	sm.shards[shard][hash] = append(sm.shards[shard][hash], value)
-	sm.locks[shard].Unlock()
+	shardIndex := sm.getShard(hash)
+	sm.locks[shardIndex].Lock() // Lock only the specific shard
+	defer sm.locks[shardIndex].Unlock()
+
+	sm.shards[shardIndex][hash] = append(sm.shards[shardIndex][hash], value)
 }
 
+// Merge combines all shards into a single map for the final result
 func (sm *ShardedMap) Merge() map[int][]int {
 	result := make(map[int][]int)
 	for _, shard := range sm.shards {
@@ -303,12 +339,15 @@ func (sm *ShardedMap) Merge() map[int][]int {
 	return result
 }
 
-func shardedImpl(bstList []*bst.BinarySearchTree, hashWorkers, dataWorkers int) map[int][]int {
-	shardedMap := NewShardedMap(dataWorkers) // Use dataWorkers as number of shards
-	var wg sync.WaitGroup
+func semaphoreImpl(bstList []*bst.BinarySearchTree, hashWorkers, dataWorkers int) map[int][]int {
+	shardedMap := NewShardedMap(dataWorkers)
+	// Allows up to `dataWorkers` goroutines
+	semaphore := make(chan struct{}, dataWorkers)
 
-	// Create worker pool
+	var wg sync.WaitGroup
 	tasks := make(chan int, len(bstList))
+
+	// Start hash workers
 	for i := 0; i < hashWorkers; i++ {
 		wg.Add(1)
 		go func() {
@@ -316,12 +355,14 @@ func shardedImpl(bstList []*bst.BinarySearchTree, hashWorkers, dataWorkers int) 
 			for idx := range tasks {
 				tree := bstList[idx]
 				tree.Hash = equivalence.ComputeHash(tree)
+
+				semaphore <- struct{}{}
 				shardedMap.Append(tree.Hash, idx)
+				<-semaphore
 			}
 		}()
 	}
 
-	// Send tasks
 	for i := 0; i < len(bstList); i++ {
 		tasks <- i
 	}
@@ -329,4 +370,18 @@ func shardedImpl(bstList []*bst.BinarySearchTree, hashWorkers, dataWorkers int) 
 	wg.Wait()
 
 	return shardedMap.Merge()
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

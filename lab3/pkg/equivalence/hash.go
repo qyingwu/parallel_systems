@@ -4,7 +4,6 @@ import (
 	"bst-equivalence/pkg/bst"
 )
 
-// ComputeHash calculates the hash of the tree based on in-order traversal
 func ComputeHash(bst2compute *bst.BinarySearchTree) int {
 	if bst2compute.InOrderTraversal == nil {
 		// Populate the in-order traversal if not already done
