@@ -12,22 +12,6 @@ Each project is designed to showcase a specific set of skills and techniques lea
   - **Project: Prefix sum with Blelloch Algorithm**
     - Implemented work efficient Blelloch algorithm for prefix sum for parallel processing.
 
-- **[Course 2: Deep Learning]**
-  - **Project: deep network to classify images SuperTuxKart**
-    - Simple deep network to classify images from SuperTuxKart.
-  - **Project: convolutional network to classify images from SuperTuxKart**
-    - convolutional network to classify images from SuperTuxKart
-  - **Project: Tune a classification network on supertux**
-    - Tune a classification to classify images from SuperTuxKart
-    - https://www.philkr.net/dl_class/homework/03/
-  - **Project: implement an object detector from scratch.**
-    - Tune a classification to classify images from SuperTuxKart
-    - https://www.philkr.net/dl_class/homework/04/
-  - **Project: Train a CNN to do vision-based driving in SuperTuxKart.**
-    - a CNN to do vision-based driving in SuperTuxKart
-    - [https://www.philkr.net/dl_class/homework/04/](https://www.philkr.net/dl_class/homework/05/)
-
-
 
 
 ## Technologies Used
