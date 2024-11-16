@@ -1,0 +1,3 @@
+{"mtype":"ParticipantVoteCommit","uid":65,"txid":"ping","senderid":"participant_9","opid":0}
+{"mtype":"ParticipantVoteCommit","uid":67,"txid":"ping","senderid":"participant_9","opid":0}
+{"mtype":"ParticipantVoteAbort","uid":69,"txid":"ping","senderid":"participant_9","opid":0}
