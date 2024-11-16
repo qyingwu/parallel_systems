@@ -11,3 +11,5 @@
 
 # Environment files
 .env
+
+/Cargo.lock/
