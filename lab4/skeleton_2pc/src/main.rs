@@ -8,14 +8,17 @@ extern crate crossbeam_channel;
 use std::env;
 use std::fs;
 use std::sync::Arc;
+use std::sync::Mutex;
 use coordinator::Coordinator;
 use client::Client;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::process::{Child,Command};
+use std::process::{Child, Command, Stdio};
 use ipc_channel::ipc::IpcSender as Sender;
 use ipc_channel::ipc::IpcReceiver as Receiver;
 use ipc_channel::ipc::IpcOneShotServer;
 use ipc_channel::ipc::channel;
+use std::thread::{self, sleep, JoinHandle};
+use std::time::Duration;
 pub mod message;
 pub mod oplog;
 pub mod coordinator;
@@ -40,20 +43,47 @@ use participant::Participant;
 /// HINT: You can change the signature of the function if necessary
 ///
 fn spawn_child_and_connect(child_opts: &mut tpcoptions::TPCOptions) -> (Child, Sender<ProtocolMessage>, Receiver<ProtocolMessage>) {
+    info!("Starting spawn_child_and_connect with options: {:?}", child_opts);
+    
     // Create IPC server with explicit type
-    let (server, server_name) = IpcOneShotServer::<(Sender<ProtocolMessage>, Receiver<ProtocolMessage>)>::new().unwrap();
+    let (server, server_name) = IpcOneShotServer::<(Sender<ProtocolMessage>, Receiver<ProtocolMessage>)>::new()
+        .unwrap_or_else(|e| {
+            error!("Failed to create IPC server: {:?}", e);
+            panic!("IPC server creation failed");
+        });
+    
+    info!("Created IPC server with name: {}", server_name);
     child_opts.ipc_path = server_name.clone();
 
     // Spawn child process
+    info!("Spawning child process with args: {:?}", child_opts.as_vec());
     let child = Command::new(env::current_exe().unwrap())
         .args(child_opts.as_vec())
         .spawn()
-        .expect("Failed to execute child process");
-
-    // Accept connection from child and get their channels
-    let (receiver, _) = server.accept().unwrap();
-    let (child_tx, child_rx) = receiver.recv().unwrap();
+        .unwrap_or_else(|e| {
+            error!("Failed to spawn child process: {:?}", e);
+            panic!("Child process spawn failed");
+        });
     
+    info!("Child process spawned with PID: {}", child.id());
+
+    // Accept connection from child
+    info!("Waiting for child process to connect...");
+    let (receiver, _) = server.accept().unwrap_or_else(|e| {
+        error!("Failed to accept connection from child: {:?}", e);
+        panic!("Child connection acceptance failed");
+    });
+    info!("Accepted connection from child process");
+
+    // Get channels from child
+    info!("Waiting to receive channels from child...");
+    let (child_tx, child_rx) = receiver.recv().unwrap_or_else(|e| {
+        error!("Failed to receive channels from child: {:?}", e);
+        panic!("Channel reception failed");
+    });
+    info!("Successfully received channels from child");
+    
+    info!("Child process setup completed successfully");
     (child, child_tx, child_rx)
 }
 
@@ -73,29 +103,67 @@ fn spawn_child_and_connect(child_opts: &mut tpcoptions::TPCOptions) -> (Child, S
 /// HINT: You can change the signature of the function if necessasry
 ///
 fn connect_to_coordinator(opts: &tpcoptions::TPCOptions) -> (Sender<ProtocolMessage>, Receiver<ProtocolMessage>) {
-    // Increase initial delay and max attempts
-    let mut retry_delay = 10; // Start with 100ms instead of 10ms
-    let max_attempts = 5;     // Increase from 5 to 10 attempts
+    println!("Starting connect_to_coordinator with IPC path: {:?}", opts.ipc_path);
+    
+    let mut retry_delay = 10;
+    let max_attempts = 5;
     
     for attempt in 0..max_attempts {
-        info!("Attempting to connect to coordinator (attempt {}/{})", attempt + 1, max_attempts);
+        println!("=== Connection Attempt {}/{} ===", attempt + 1, max_attempts);
+        println!("Current retry delay: {}ms", retry_delay);
         
         match Sender::connect(opts.ipc_path.clone()) {
             Ok(coordinator_conn) => {
-                // Create channels
-                let (tx1, rx1) = channel().unwrap();
-                let (tx2, rx2) = channel().unwrap();
+                println!("✓ Successfully established initial connection to coordinator");
                 
-                // Send channels to coordinator with error handling
+                // Create channels
+                println!("Creating IPC channels...");
+                let (tx1, rx1) = match channel() {
+                    Ok(channels) => {
+                        println!("✓ Successfully created first channel pair");
+                        channels
+                    },
+                    Err(e) => {
+                        println!("✗ Failed to create first channel pair: {:?}", e);
+                        if attempt < max_attempts - 1 {
+                            sleep(Duration::from_millis(retry_delay));
+                            retry_delay *= 2;
+                            continue;
+                        } else {
+                            panic!("Failed to create channels after all attempts");
+                        }
+                    }
+                };
+                
+                let (tx2, rx2) = match channel() {
+                    Ok(channels) => {
+                        println!("✓ Successfully created second channel pair");
+                        channels
+                    },
+                    Err(e) => {
+                        println!("✗ Failed to create second channel pair: {:?}", e);
+                        if attempt < max_attempts - 1 {
+                            sleep(Duration::from_millis(retry_delay));
+                            retry_delay *= 2;
+                            continue;
+                        } else {
+                            panic!("Failed to create channels after all attempts");
+                        }
+                    }
+                };
+                
+                // Send channels to coordinator
+                println!("Sending channels to coordinator...");
                 match coordinator_conn.send((tx1, rx2)) {
                     Ok(_) => {
-                        info!("Successfully connected to coordinator");
+                        println!("✓ Successfully sent channels to coordinator");
+                        println!("Connection process completed successfully!");
                         return (tx2, rx1);
                     }
                     Err(e) => {
-                        warn!("Failed to send channels to coordinator: {:?}", e);
+                        println!("✗ Failed to send channels to coordinator: {:?}", e);
                         if attempt < max_attempts - 1 {
-                            std::thread::sleep(std::time::Duration::from_millis(retry_delay));
+                            sleep(Duration::from_millis(retry_delay));
                             retry_delay *= 2;
                             continue;
                         }
@@ -103,9 +171,10 @@ fn connect_to_coordinator(opts: &tpcoptions::TPCOptions) -> (Sender<ProtocolMess
                 }
             }
             Err(e) => {
-                warn!("Connection attempt {} failed: {:?}", attempt + 1, e);
+                println!("✗ Initial connection attempt {} failed: {:?}", attempt + 1, e);
                 if attempt < max_attempts - 1 {
-                    std::thread::sleep(std::time::Duration::from_millis(retry_delay));
+                    println!("Waiting {}ms before next attempt...", retry_delay);
+                    sleep(Duration::from_millis(retry_delay));
                     retry_delay *= 2;
                     continue;
                 }
@@ -113,7 +182,9 @@ fn connect_to_coordinator(opts: &tpcoptions::TPCOptions) -> (Sender<ProtocolMess
         }
     }
     
-    panic!("Failed to establish connection with coordinator after {} attempts. Check if coordinator is running and the IPC path is correct: {:?}", max_attempts, opts.ipc_path);
+    let error_msg = format!("Failed to establish connection with coordinator after {} attempts. Check if coordinator is running and the IPC path is correct: {:?}", max_attempts, opts.ipc_path);
+    println!("✗ {}", error_msg);
+    panic!("{}", error_msg);
 }
 
 
@@ -133,100 +204,116 @@ fn connect_to_coordinator(opts: &tpcoptions::TPCOptions) -> (Sender<ProtocolMess
 /// 4. Starts the coordinator protocol
 /// 5. Wait until the children finish execution
 ///
-fn run(opts: &tpcoptions::TPCOptions, running: Arc<AtomicBool>) {
-    // Create a unique IPC path
-    let ipc_path = format!("/tmp/tpc_coordinator_{}", std::process::id());
-    info!("Setting up coordinator with IPC path: {}", ipc_path);
+enum ProcessHandle {
+    Thread(JoinHandle<()>),
+    Process(Child)
+}
 
-    // Ensure log directory exists
+fn run(opts: &tpcoptions::TPCOptions, running: Arc<AtomicBool>) {
+    println!("Starting run function with options: {:?}", opts);
+    
+    // Create log directory
     let log_dir = std::path::Path::new(&opts.log_path);
+    println!("Creating log directory at: {:?}", log_dir);
     std::fs::create_dir_all(log_dir).unwrap_or_else(|e| {
+        println!("ERROR: Failed to create log directory: {}", e);
         panic!("Failed to create log directory {:?}: {}", log_dir, e)
     });
 
     let coord_log_path = log_dir.join("coordinator.log");
-    let running_flag = running.clone();
-    
-    // Create coordinator first
-    info!("Creating coordinator...");
-    let mut coordinator = Coordinator::new(coord_log_path.to_str().unwrap().to_string(), &running_flag);
-    
-    info!("Spawning {} participants...", opts.num_participants);
-    let mut participant_children = Vec::new();
-    
-    // Wait for coordinator to initialize
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    println!("Coordinator log path: {:?}", coord_log_path);
 
-    // Spawn participants
-    for i in 0..opts.num_participants {
-        let participant_id = format!("participant_{}", i);
-        info!("Spawning participant {}", participant_id);
-        
-        let (tx_to_coord, rx_from_part) = channel().unwrap();
-        let (tx_to_part, rx_from_coord) = channel().unwrap();
-        
-        // Register participant with coordinator first
-        coordinator.participant_join(i as u32, tx_to_part.clone(), rx_from_part);
-        
-        // Spawn participant process
-        let participant_log_path = log_dir.join(format!("participant_{}.log", i));
-        let child = spawn_participant(
-            i as u32,
-            participant_log_path.to_str().unwrap(),
-            tx_to_coord,
-            rx_from_coord,
-            running.clone(),
-        );
-        
-        participant_children.push(child);
-        info!("Participant {} spawned successfully", participant_id);
-    }
+    // Create coordinator
+    println!("Creating coordinator...");
+    let coordinator = Arc::new(Mutex::new(
+        Coordinator::new(coord_log_path.to_str().unwrap().to_string(), &running)
+    ));
+   
+    // Then declare your handles vector as:
+    let mut handles: Vec<ProcessHandle> = Vec::new();
 
-    // Start coordinator protocol
-    info!("Starting coordinator protocol...");
-    coordinator.protocol();
+    // Create and start coordinator thread
+    let coordinator_clone = coordinator.clone();  // Clone Arc<Mutex<Coordinator>>
+    let running_clone = running.clone();          // Clone Arc<AtomicBool>
 
-    // Wait for all participants to finish
-    for child in participant_children {
-        let _ = child.wait_with_output();
-    }
-}
-
-fn spawn_participant(
-    id: u32,
-    log_path: &str,
-    tx: Sender<ProtocolMessage>,
-    rx: Receiver<ProtocolMessage>,
-    running: Arc<AtomicBool>,
-) -> std::process::Child {
-    info!("Spawning participant {} with log path: {}", id, log_path);
-    
-    let mut participant = Participant::new(
-        format!("participant_{}", id),
-        log_path.to_string(),
-        running,
-        0.95,  // send_success_prob
-        0.95,  // operation_success_prob
-        rx,    // This is from_coordinator (Receiver)
-        tx,    // This is to_coordinator (Sender)
-    );
-
-    std::thread::spawn(move || {
-        info!("Starting participant {} protocol", id);
-        participant.protocol();
+    let coord_handle = thread::spawn(move || {
+        let mut coord = coordinator_clone.lock().unwrap();
+        coord.start();  // or whatever method starts your coordinator's main loop
     });
 
-    std::process::Command::new(std::env::current_exe().unwrap())
-        .arg("--mode")
-        .arg("participant")
-        .arg("--id")
-        .arg(id.to_string())
-        .arg("--log-path")
-        .arg(log_path)
-        .spawn()
-        .expect("Failed to spawn participant process")
-}
+    // For thread handles:
+    handles.push(ProcessHandle::Thread(coord_handle));
 
+    // Wait for coordinator to initialize
+    sleep(Duration::from_millis(1000));
+
+    // Create clients
+    println!("Starting client creation. Number of clients: {}", opts.num_clients);
+    for i in 0..opts.num_clients {
+        let client_id = i as u32;
+        let client_log_path = log_dir.join(format!("client_{}.log", client_id));
+
+        println!("Spawning client {} process", client_id);
+        let client_handle = Command::new(env::current_exe().unwrap())
+            .arg("-m")
+            .arg("client")
+            .arg("--ipc_path")
+            .arg(&opts.ipc_path)
+            .arg("-l")
+            .arg(&opts.log_path)
+            .arg("--num")
+            .arg(&client_id.to_string())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .expect("Failed to spawn client process");
+        
+        handles.push(ProcessHandle::Process(client_handle));    
+        println!("Client {} process spawned", client_id);
+        sleep(Duration::from_millis(100));
+    }
+
+    // Create participants
+    println!("Starting participant creation. Number of participants: {}", opts.num_participants);
+    for i in 0..opts.num_participants {
+        let participant_id = i as u32;
+        let participant_log_path = log_dir.join(format!("participant_{}.log", participant_id));
+
+        println!("Spawning participant {} process", participant_id);
+        let participant_handle = Command::new(env::current_exe().unwrap())
+            .arg("-m")
+            .arg("participant")
+            .arg("--ipc_path")
+            .arg(&opts.ipc_path)
+            .arg("-l")
+            .arg(&opts.log_path)
+            .arg("--num")
+            .arg(&participant_id.to_string())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .expect("Failed to spawn participant process");
+        handles.push(ProcessHandle::Process(participant_handle));    
+        println!("Participant {} process spawned", participant_id);
+        sleep(Duration::from_millis(100));
+    }
+    println!("All participants created and initialized");
+
+    // Wait for all processes to complete
+
+    for (i, handle) in handles.into_iter().enumerate() {
+        println!("Waiting for process/thread {} to complete", i);
+        match handle {
+            ProcessHandle::Thread(h) => {
+                let _ = h.join().unwrap();
+            },
+            ProcessHandle::Process(mut h) => {
+                let _ = h.wait().unwrap();
+            }
+        }
+        println!("Process/thread {} completed", i);
+    }
+}
 
 ///
 /// pub fn run_client(opts: &tpcoptions:TPCOptions, running: Arc<AtomicBool>, shutdown_rx: crossbeam_channel::Receiver<()>)
@@ -314,7 +401,7 @@ fn main() {
     }
     
 
-     // Set up Ctrl-C handler
+    // Set-up Ctrl-C / SIGINT handler
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
     let m = opts.mode.clone();

@@ -26,25 +26,14 @@ impl OpLog {
     /// Creates a new Operations Log at the designated file path
     ///
     pub fn new(fpath: String) -> OpLog {
-        // Ensure parent directory exists
-        if let Some(parent) = std::path::Path::new(&fpath).parent() {
-            std::fs::create_dir_all(parent)
-                .unwrap_or_else(|e| panic!("Failed to create directory for log file: {}", e));
-        }
-
-        // Create the file
-        let lf = File::create(&fpath)
-            .unwrap_or_else(|e| panic!("Failed to create log file {}: {}", fpath, e));
-
         let l = HashMap::new();
         let lck = Mutex::new(l);
         let arc = Arc::new(lck);
-        
         OpLog {
             seqno: 0,
             log_arc: arc,
             path: fpath.to_string(),
-            lf,
+            lf: File::create(fpath).unwrap(),
         }
     }
 

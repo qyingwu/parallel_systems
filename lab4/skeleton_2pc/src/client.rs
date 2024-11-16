@@ -179,34 +179,45 @@ impl Client {
     ///       exit signal before returning from the protocol method!
     ///
     pub fn protocol(&mut self, n_requests: u32) {
-        for _ in 0..n_requests {
+        println!("{}::Starting protocol with {} requests", self.id_str, n_requests);
+        
+        for i in 0..n_requests {
             if !self.running.load(Ordering::Relaxed) {
+                println!("{}::Protocol stopped early at request {}/{}", self.id_str, i, n_requests);
                 break;
             }
+            println!("{}::Processing request {}/{}", self.id_str, i + 1, n_requests);
             self.send_next_operation();
 
             // Wait for response with timeout
             let mut received_response = false;
+            let mut attempts = 0;
             while !received_response && self.running.load(Ordering::Relaxed) {
+                attempts += 1;
+                println!("{}::Waiting for response (attempt {})", self.id_str, attempts);
+                
                 match self.receiver.try_recv() {
                     Ok(msg) => {
                         match msg.mtype {
                             MessageType::CoordinatorExit => {
+                                println!("{}::Received coordinator exit signal", self.id_str);
                                 info!("{}::CoordinatorExit received, shutting down", self.id_str.clone());
                                 self.running.store(false, Ordering::Relaxed);
                                 return;
                             }
                             _ => {
-                                // Handle normal response
+                                println!("{}::Received response for txid: {}", self.id_str, msg.txid);
                                 self.handle_response(msg);
                                 received_response = true;
                             }
                         }
                     }
                     Err(TryRecvError::Empty) => {
+                        println!("{}::No response yet, waiting...", self.id_str);
                         thread::sleep(Duration::from_millis(100));
                     }
                     Err(e) => {
+                        println!("{}::Error receiving response: {:?}", self.id_str, e);
                         error!("{}::Error receiving from coordinator: {:?}", self.id_str.clone(), e);
                         self.unknown_ops += 1;
                         received_response = true; // Break the loop on error
@@ -215,7 +226,9 @@ impl Client {
             }
         }
 
+        println!("{}::All requests processed, waiting for exit signal", self.id_str);
         self.wait_for_exit_signal();
+        println!("{}::Protocol completed, generating final report", self.id_str);
         self.report_status();
     }
 

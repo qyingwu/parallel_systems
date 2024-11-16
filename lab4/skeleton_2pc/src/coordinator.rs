@@ -104,7 +104,10 @@ impl Coordinator {
     /// HINT: You may need to change the signature of this function
     ///
     pub fn participant_join(&mut self, id: u32, tx: Sender<ProtocolMessage>, rx: Receiver<ProtocolMessage>) {
+        println!("\n=== Starting participant_join for ID: {} ===", id);
+        
         assert!(self.state == CoordinatorState::Quiescent);
+        println!("State check passed: Coordinator is in Quiescent state");
         
         // Create ping message
         let ping = ProtocolMessage::generate(
@@ -113,25 +116,49 @@ impl Coordinator {
             "coordinator".to_string(),
             0,
         );
+        println!("Created ping message: {:?}", ping);
         
         // Send a ping message with better error handling and retries
+        println!("Starting connection verification process...");
         let mut connected = false;
         for attempt in 0..3 {
+            println!("\nAttempt {} to establish connection:", attempt + 1);
+            
             match tx.send(ping.clone()) {
                 Ok(_) => {
+                    println!("Successfully sent ping to participant {}", id);
                     // Wait for response
-                    match rx.try_recv_timeout(Duration::from_secs(1)) {
-                        Ok(_) => {
-                            connected = true;
-                            break;
+                    println!("Waiting for response from participant {}...", id);
+                    match rx.try_recv_timeout(Duration::from_secs(5)) {
+                        Ok(response) => {
+                            println!("Received response from participant {}: {:?}", id, response);
+                            match response.mtype {
+                                MessageType::ParticipantVoteCommit => {
+                                    println!("Participant {} voted to COMMIT", id);
+                                    connected = true;
+                                    break;
+                                }
+                                MessageType::ParticipantVoteAbort => {
+                                    println!("Participant {} voted to ABORT", id);
+                                    connected = true;  // Still consider it connected, just voted abort
+                                    break;
+                                }
+                                _ => {
+                                    println!("WARNING: Unexpected message type from participant {}: {:?}", 
+                                        id, response.mtype);
+                                }
+                            }
                         }
                         Err(e) => {
-                            warn!("Attempt {} - No response from participant {}: {:?}", attempt + 1, id, e);
+                            println!("ERROR: Failed to receive response from participant {}: {:?}", id, e);
+                            warn!("Attempt {} - No response from participant {}: {:?}", 
+                                attempt + 1, id, e);
                         }
                     }
                 }
                 Err(e) => {
-                    warn!("Attempt {} - Failed to ping participant {}: {:?}", attempt + 1, id, e);
+                    println!("WARNING: Attempt {} - Failed to ping participant {}: {:?}", 
+                        attempt + 1, id, e);
                 }
             }
             thread::sleep(Duration::from_millis(100));
@@ -177,60 +204,44 @@ impl Coordinator {
     /// HINT: Wait for some kind of exit signal before returning from the protocol!
     ///
     pub fn protocol(&mut self) {
-        let protocol_timeout = Duration::from_secs(30);
-        let start_time = std::time::Instant::now();
+        info!("Starting coordinator protocol");
+        let mut transactions_completed = 0;
+        let max_transactions = 10; // Or whatever number you want to run
         
-        info!("Coordinator protocol started");
-        
-        while self.running.load(Ordering::Relaxed) {
-            // Handle heartbeats
-            let participant_ids: Vec<_> = self.participants.keys().cloned().collect();
-            for id in participant_ids {
-                if let Some((tx, _)) = self.participants.get(&id) {
-                    let heartbeat = ProtocolMessage::generate(
-                        MessageType::CoordinatorPropose,
-                        "heartbeat".to_string(),
-                        "coordinator".to_string(),
-                        0,
-                    );
-                    
-                    if let Err(e) = tx.send(heartbeat) {
-                        error!("Lost connection to participant {}: {:?}", id, e);
-                    }
-                }
+        while self.running.load(Ordering::Relaxed) && transactions_completed < max_transactions {
+            // Wait for participants to be ready
+            if self.participants.is_empty() {
+                std::thread::sleep(Duration::from_millis(100));
+                continue;
             }
 
-            // Handle client messages
-            let mut messages_to_handle: Vec<(u32, ProtocolMessage)> = Vec::new();
+            info!("Starting transaction {}", transactions_completed);
             
-            // First collect all messages
-            for (client_id, (_, rx)) in self.clients.iter() {
-                match rx.try_recv() {
-                    Ok(msg) => messages_to_handle.push((*client_id, msg)),
-                    Err(TryRecvError::Empty) => {},
-                    Err(TryRecvError::IpcError(e)) => {
-                        error!("Lost connection to client {}: {:?}", client_id, e);
-                    }
-                }
-            }
-            
-            // Then handle them
-            for (client_id, msg) in messages_to_handle {
-                if let Err(e) = self.handle_client_request(client_id, msg) {
-                    error!("Error handling client request: {:?}", e);
+            // Create transaction
+            let txid = format!("tx_{}", transactions_completed);
+            let proposal = ProtocolMessage::generate(
+                MessageType::CoordinatorPropose,
+                txid.clone(),
+                "coordinator".to_string(),
+                transactions_completed as u32,
+            );
+
+            // Send proposal to all participants
+            for (id, (tx, _)) in &self.participants {
+                if let Err(e) = tx.send(proposal.clone()) {
+                    error!("Failed to send proposal to participant {}: {:?}", id, e);
+                    continue;
                 }
             }
 
-            thread::sleep(Duration::from_millis(100));
+            // ... rest of the transaction logic ...
 
-            if start_time.elapsed() > protocol_timeout {
-                warn!("Protocol timeout reached");
-                break;
-            }
+            transactions_completed += 1;
+            std::thread::sleep(Duration::from_millis(500));
         }
 
-        info!("Coordinator protocol ending");
-        self.shutdown();
+        info!("Coordinator completed {} transactions", transactions_completed);
+        self.report_status();
     }
 
     // Separate shutdown logic into its own function
@@ -386,20 +397,6 @@ impl Coordinator {
     }
     
     
-    
-
-    pub fn register_participant(&mut self, id: u32, tx: Sender<ProtocolMessage>, rx: Receiver<ProtocolMessage>) {
-        // Directly store the provided channels instead of creating new ones
-        self.participant_join(id, tx, rx);
-        info!("Registered participant {}", id);
-    }
-
-    pub fn register_client(&mut self, id: u32, tx: Sender<ProtocolMessage>, rx: Receiver<ProtocolMessage>) {
-        // Directly store the provided channels instead of creating new ones
-        self.client_join(id, tx, rx);
-        info!("Registered client {}", id);
-    }
-
     pub fn setup_channels(&mut self, id: u32, is_participant: bool) -> Result<(Sender<ProtocolMessage>, Receiver<ProtocolMessage>), String> {
         // Add retry logic for channel creation
         let mut retries = 3;

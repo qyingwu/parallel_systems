@@ -253,7 +253,18 @@ impl Participant {
     
 
     pub fn start(&mut self) {
+        // Send a "ready" message to the coordinator
+        let ready_message = ProtocolMessage::generate(
+            MessageType::ParticipantVoteCommit, // Use a message type that indicates readiness
+            "ready".to_string(),
+            self.id_str.clone(),
+            0,
+        );
+        self.send(ready_message);
+    
+        info!("Participant {} starting protocol", self.id_str);
         self.protocol();
     }
+    
     
 }
