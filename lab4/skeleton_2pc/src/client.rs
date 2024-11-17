@@ -57,12 +57,13 @@ impl Client {
     ///
     pub fn new(id_str: String,
                running: Arc<AtomicBool>,
+               num_requests: u32,
                sender: Sender<message::ProtocolMessage>,
                receiver: Receiver<message::ProtocolMessage>) -> Client {
         Client {
             id_str: id_str,
             running: running,
-            num_requests: 0,
+            num_requests: num_requests,
             sender,
             receiver,
             failed_ops: 0,
@@ -101,7 +102,7 @@ impl Client {
                                                     txid.clone(),
                                                     self.id_str.clone(),
                                                     self.num_requests);
-        info!("{}::Sending operation #{}", self.id_str.clone(), self.num_requests);
+        println!("{}::Sending operation #{}", self.id_str.clone(), self.num_requests);
 
         // Send the message using the IPC channel
         if let Err(e) = self.sender.send(pm) {
@@ -122,35 +123,47 @@ impl Client {
     ///
 
     pub fn recv_result(&mut self) {
+        println!("{}::Receiving Coordinator Result", self.id_str.clone());
 
-        info!("{}::Receiving Coordinator Result", self.id_str.clone());
-
-        match self.receiver.recv() {
-            Ok(msg) => {
-                match msg.mtype {
-                    MessageType::CoordinatorCommit => {
-                        self.transaction_status.insert(msg.txid.clone(), RequestStatus::Committed);
-                        self.successful_ops += 1;
-                        info!("{}::Received commit for operation: {}", self.id_str.clone(), msg.txid);
+        loop {  // Add a loop to keep trying until we get a valid result
+            match self.receiver.recv() {
+                Ok(msg) => {
+                    match msg.mtype {
+                        // Skip ClientRequest messages
+                        MessageType::ClientRequest => {
+                            println!("Skipping echo of our own request");
+                            break;  // Continue waiting for the actual result
+                        },
+                        MessageType::ClientResultCommit => {
+                            self.transaction_status.insert(msg.txid.clone(), RequestStatus::Committed);
+                            self.successful_ops += 1;
+                            println!("{}::Received commit for operation: {}", self.id_str.clone(), msg.txid);
+                            break;  // Got our result, can exit the loop
+                        }
+                        MessageType::ClientResultAbort => {
+                            self.transaction_status.insert(msg.txid.clone(), RequestStatus::Aborted);
+                            self.failed_ops += 1;
+                            info!("{}::Received abort for operation: {}", self.id_str.clone(), msg.txid);
+                            break;  // Got our result, can exit the loop
+                        }
+                        MessageType::CoordinatorExit => {
+                            info!("{}::Coordinator is shutting down", self.id_str.clone());
+                            self.shutdown();
+                            break;
+                        }
+                        unexpected_msg => {
+                            self.unknown_ops += 1;
+                            error!("{}::Unexpected message type {:?} received for operation: {}", 
+                                  self.id_str.clone(), unexpected_msg, msg.txid);
+                            break;
+                        }
                     }
-                    MessageType::CoordinatorAbort => {
-                        self.transaction_status.insert(msg.txid.clone(), RequestStatus::Aborted);
-                        self.failed_ops += 1;
-                        info!("{}::Received abort for operation: {}", self.id_str.clone(), msg.txid);
-                    }
-                    MessageType::CoordinatorExit => {
-                        info!("{}::Coordinator is shutting down", self.id_str.clone());
-                        self.shutdown();
-                    }
-                    _ => {
-                        self.unknown_ops += 1;
-                        error!("{}::Unknown message type received for operation: {}", self.id_str.clone(), msg.txid);
-                    }
+                },
+                Err(e) => {
+                    error!("{}::Failed to receive response: {:?}", self.id_str.clone(), e);
+                    self.unknown_ops += 1; // Treat as unknown
+                    break;
                 }
-            },
-            Err(e) => {
-                error!("{}::Failed to receive response: {:?}", self.id_str.clone(), e);
-                self.unknown_ops += 1; // Treat as unknown
             }
         }
     }
@@ -181,49 +194,34 @@ impl Client {
     pub fn protocol(&mut self, n_requests: u32) {
         println!("{}::Starting protocol with {} requests", self.id_str, n_requests);
         
+        // Wait for handshake from coordinator
+        println!("{}::Waiting for handshake from coordinator", self.id_str);
+        loop {
+            match self.receiver.recv() {
+                Ok(msg) => {
+                    if msg.mtype == MessageType::HandShake {
+                        println!("{}::Handshake received from coordinator: {:?}", self.id_str, msg);
+                        break; // Exit handshake loop
+                    } else {
+                        error!("{}::Unexpected message type {:?} during handshake", self.id_str, msg.mtype);
+                    }
+                }
+                Err(e) => {
+                    error!("{}::Error receiving handshake: {:?}", self.id_str, e);
+                    // Optionally retry or abort the client here
+                    break;
+                }
+            }
+        }
+        
+        // Continue with normal protocol after handshake
         for i in 0..n_requests {
             if !self.running.load(Ordering::Relaxed) {
                 println!("{}::Protocol stopped early at request {}/{}", self.id_str, i, n_requests);
                 break;
             }
-            println!("{}::Processing request {}/{}", self.id_str, i + 1, n_requests);
             self.send_next_operation();
-
-            // Wait for response with timeout
-            let mut received_response = false;
-            let mut attempts = 0;
-            while !received_response && self.running.load(Ordering::Relaxed) {
-                attempts += 1;
-                println!("{}::Waiting for response (attempt {})", self.id_str, attempts);
-                
-                match self.receiver.try_recv() {
-                    Ok(msg) => {
-                        match msg.mtype {
-                            MessageType::CoordinatorExit => {
-                                println!("{}::Received coordinator exit signal", self.id_str);
-                                info!("{}::CoordinatorExit received, shutting down", self.id_str.clone());
-                                self.running.store(false, Ordering::Relaxed);
-                                return;
-                            }
-                            _ => {
-                                println!("{}::Received response for txid: {}", self.id_str, msg.txid);
-                                self.handle_response(msg);
-                                received_response = true;
-                            }
-                        }
-                    }
-                    Err(TryRecvError::Empty) => {
-                        println!("{}::No response yet, waiting...", self.id_str);
-                        thread::sleep(Duration::from_millis(100));
-                    }
-                    Err(e) => {
-                        println!("{}::Error receiving response: {:?}", self.id_str, e);
-                        error!("{}::Error receiving from coordinator: {:?}", self.id_str.clone(), e);
-                        self.unknown_ops += 1;
-                        received_response = true; // Break the loop on error
-                    }
-                }
-            }
+            self.recv_result();
         }
 
         println!("{}::All requests processed, waiting for exit signal", self.id_str);
@@ -232,29 +230,8 @@ impl Client {
         self.report_status();
     }
 
-    // Add this helper method to handle responses
-    fn handle_response(&mut self, msg: message::ProtocolMessage) {
-        match msg.mtype {
-            MessageType::CoordinatorCommit => {
-                self.transaction_status.insert(msg.txid.clone(), RequestStatus::Committed);
-                self.successful_ops += 1;
-                info!("{}::Received commit for operation: {}", self.id_str.clone(), msg.txid);
-            }
-            MessageType::CoordinatorAbort => {
-                self.transaction_status.insert(msg.txid.clone(), RequestStatus::Aborted);
-                self.failed_ops += 1;
-                info!("{}::Received abort for operation: {}", self.id_str.clone(), msg.txid);
-            }
-            _ => {
-                self.unknown_ops += 1;
-                error!("{}::Unknown message type received for operation: {}", self.id_str.clone(), msg.txid);
-            }
-        }
-    }
 
     pub fn start(&mut self) {
-        // Start the client protocol with the configured number of requests
-        // You'll need to store n_requests in the Client struct and pass it here
         self.protocol(self.num_requests);
     }
 
