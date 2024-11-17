@@ -106,21 +106,6 @@ impl Coordinator {
     pub fn participant_join(&mut self, id: u32, tx: IpcSender<ProtocolMessage>, rx: IpcReceiver<ProtocolMessage>) {
         println!("\n=== Starting participant_join for ID: {} ===", id);
         
-        // Send handshake to the new participant
-        let handshake = ProtocolMessage::generate(
-            MessageType::HandShake,
-            "0".to_string(),
-            "coordinator".to_string(),
-            0
-        );
-        println!("Generated handshake message: {:?}", handshake);
-
-        if let Err(e) = tx.send(handshake) {
-            error!("Failed to send handshake to participant {}: {:?}", id, e);
-        } else {
-            println!("Handshake sent successfully to client/participant {}", id);
-        }
-        
         self.participants.insert(id, (tx.clone(), rx));
         println!("Participant {} joined successfully", id);
     }
@@ -140,31 +125,6 @@ impl Coordinator {
             );
             return;
         }
-    
-        // Create and send a handshake message
-        let handshake = ProtocolMessage::generate(
-            MessageType::HandShake,
-            "0".to_string(),  // Transaction ID for handshake
-            "coordinator".to_string(),  // Sender ID
-            0,  // Operation ID
-        );
-        println!("Generated handshake message: {:?}", handshake);
-        
-        if let Err(e) = tx.send(handshake.clone()) {
-            error!("Failed to send handshake: {:?}", e);
-        } else {
-            info!("Handshake sent to client/participant {}", id);
-        }
-        
-    
-        match tx.send(handshake.clone()) {
-            Ok(_) => println!("Handshake sent to client {}", id),
-            Err(e) => {
-                error!("Failed to send handshake to client {}: {:?}", id, e);
-                return; // Do not add the client if handshake fails
-            }
-        }
-    
         // Add the client to the coordinator's map
         self.clients.insert(id, (tx, rx));
         info!("Client {} successfully joined", id);
@@ -197,8 +157,8 @@ impl Coordinator {
             self.clients.len(),
             self.participants.len()
         );
-        
-        let transactions_completed = 0;
+
+        let mut transactions_completed = 0;
         let max_transactions = 10;
 
         while self.running.load(Ordering::SeqCst) && transactions_completed < max_transactions {
@@ -241,18 +201,17 @@ impl Coordinator {
             for msg in participant_messages {
                 self.handle_message(msg);
             }
+            transactions_completed += 1;
 
             thread::sleep(Duration::from_millis(100));
+            
         }
+        
     }
 
     // Add a helper method to handle messages
     fn handle_message(&mut self, msg: ProtocolMessage) {
         match msg.mtype {
-            MessageType::HandShake => {
-                println!("👍 Received Handshake from client {}", msg.senderid);
-                return;
-            }
             MessageType::ClientRequest => {
                 println!("\n=== Processing ClientRequest ===");
                 println!("📥 Received client request: {:?}", msg);
@@ -526,7 +485,6 @@ impl Coordinator {
 
     pub fn start(&mut self) {
         // Start the coordinator protocol
-        //self.broadcast_global_decision("0".to_string(), MessageType::HandShake);
         self.protocol();
     }
 }
