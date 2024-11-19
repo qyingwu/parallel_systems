@@ -7,7 +7,7 @@ extern crate ipc_channel;
 extern crate crossbeam_channel;
 use std::env;
 use std::fs;
-use std::sync::Arc;
+use std::sync::{Arc, Barrier};
 use std::sync::Mutex;
 use coordinator::Coordinator;
 use client::Client;
@@ -47,17 +47,13 @@ fn spawn_child_and_connect(child_opts: &mut tpcoptions::TPCOptions) -> (Child, I
             panic!("IPC server creation failed");
         });
 
-    println!("Created IPC server with name: {}", server_name);
 
     // Step 2: Set `ipc_path` for the child options
     child_opts.ipc_path = server_name.clone();
 
     // Step 3: Log the executable path
     let exe_path = env::current_exe().unwrap();
-    println!("Executable path: {:?}", exe_path);
-
     // Step 4: Spawn child process
-    println!("Spawning child process with arguments: {:?}", child_opts.as_vec());
     let child = Command::new(exe_path)
         .args(child_opts.as_vec())
         .stdout(Stdio::inherit())
@@ -68,15 +64,12 @@ fn spawn_child_and_connect(child_opts: &mut tpcoptions::TPCOptions) -> (Child, I
             panic!("Child process spawn failed");
         });
 
-    println!("Child process spawned with PID: {}", child.id());
 
     // Step 5: Wait for the child process to connect
-    println!("Waiting for child process to connect...");
     let (_receiver, (sender, receiver)) = server.accept().unwrap_or_else(|e| {
         error!("Failed to accept connection from child: {:?}", e);
         panic!("Child connection acceptance failed");
     });
-
 
     // Step 7: Return child handle and channels
     (child, sender, receiver)
@@ -98,15 +91,10 @@ fn spawn_child_and_connect(child_opts: &mut tpcoptions::TPCOptions) -> (Child, I
 /// HINT: You can change the signature of the function if necessasry
 ///
 fn connect_to_coordinator(opts: &tpcoptions::TPCOptions) -> (IpcSender<ProtocolMessage>, IpcReceiver<ProtocolMessage>) {
-    println!("=== Starting connect_to_coordinator ===");
-    println!("IPC path: {:?}", opts.ipc_path);
-    
     let (to_child, from_parent): (IpcSender<ProtocolMessage>, IpcReceiver<ProtocolMessage>) = channel().unwrap();
     let (to_parent, from_child): (IpcSender<ProtocolMessage>, IpcReceiver<ProtocolMessage>) = channel().unwrap();
 
-   
     // Connect to the coordinator's IPC server
-    println!("Attempting to connect to coordinator's IPC server...");
     let tx = IpcSender::connect(opts.ipc_path.clone())
         .unwrap_or_else(|e| {
             println!("ERROR: Failed to connect to coordinator: {:?}", e);
@@ -115,10 +103,6 @@ fn connect_to_coordinator(opts: &tpcoptions::TPCOptions) -> (IpcSender<ProtocolM
         });
     
     tx.send((to_child, from_child)).unwrap();
-    
-   
-    
-    println!("=== Exiting connect_to_coordinator ===");
 
     (to_parent, from_parent)
 }
@@ -149,52 +133,60 @@ fn run(opts: &tpcoptions::TPCOptions, running: Arc<AtomicBool>) {
     println!("Starting run function with options: {:?}", opts);
 
      // Step 1: Create Coordinator
+     //Arc: Atomic Reference Counting
+     //Thread-Safe Shared Ownership
+     // Coordinator must be accessible to multiple threads
     let coordinator = Arc::new(Mutex::new(Coordinator::new(
         format!("{}/coordinator.log", opts.log_path),
         &running,
     )));
 
-    // Step 2: Start Coordinator Protocol in a Separate Thread
+    //Step 2 clone coordinator
+    // Create a Barrier to Synchronize Initialization
+    //Two threads: main thread and coordinator thread
+    let barrier = Arc::new(Barrier::new(2)); 
+    let barrier_clone = barrier.clone();
     let coordinator_clone = coordinator.clone();
     
-
-    // Allow coordinator to initialize
-    thread::sleep(Duration::from_millis(500));
-
-    // Step 3: Create and Connect Clients
+    //step 3: Create and Connect Clients
     let mut handles: Vec<Child> = vec![];
-    println!("opts.num_clients is {}", opts.num_clients);
+    //Iterates for Each Client:
     for i in 0..opts.num_clients {
         let mut client_opts = opts.clone();
         client_opts.mode = "client".to_string();
         client_opts.num = i;
-
+        //Use spawn to start a child process for the client
+        // establish IPC channels (client_tx and client_rx) for communication with the coordinator.
         let (child, client_tx, client_rx) = spawn_child_and_connect(&mut client_opts);
-        println!("spawn_child_and_connect returned channels for client {}: TX = {:?}, RX = {:?}", i, client_tx, client_rx);
-        println!("Calling client_join for client {}", i);
+        
+        //Registers the Client with the Coordinator:
         coordinator.lock().unwrap().client_join(i, client_tx, client_rx);
+        //Stores the Client Process Handle
         handles.push(child);
     }
 
     // Step 4: Create and Connect Participants
-    println!("opts.num_participants is {}", opts.num_participants);
     for i in 0..opts.num_participants {
         let mut participant_opts = opts.clone();
         participant_opts.mode = "participant".to_string();
         participant_opts.num = i;
 
         let (child, participant_tx, participant_rx) = spawn_child_and_connect(&mut participant_opts);
-        println!("spawn_child_and_connect returned channels for participant {}: TX = {:?}, RX = {:?}", i, participant_tx, participant_rx);
-        println!("Calling participant_join for participant {}", i);
+        
         coordinator.lock().unwrap().participant_join(i, participant_tx, participant_rx);
         handles.push(child);
     }
 
+    // Start the Coordinator in a Separate Thread
     let coord_handle = thread::spawn(move || {
         let mut coord = coordinator_clone.lock().unwrap();
-        coord.start();
+        coord.start(); // Coordinator's main logic
+        barrier_clone.wait(); // Signal main thread that initialization is complete
     });
-    
+
+    // Wait for the Coordinator Thread to Signal Initialization
+    barrier.wait(); 
+
     // Step 5: Wait for All Child Processes to Finish
     for mut handle in handles {
         handle.wait().expect("Child process failed");
@@ -203,8 +195,6 @@ fn run(opts: &tpcoptions::TPCOptions, running: Arc<AtomicBool>) {
     // Step 6: Wait for Coordinator Thread to Complete
     coord_handle.join().expect("Coordinator thread failed");
 
-    
-    println!("Run function completed.");
 }
 
 
@@ -219,14 +209,11 @@ fn run(opts: &tpcoptions::TPCOptions, running: Arc<AtomicBool>) {
 /// 3. Starts the client protocol
 ///
 fn run_client(opts: &tpcoptions::TPCOptions, running: Arc<AtomicBool>) {
-    println!("Client {} started.", opts.num);
     let client_id_str = format!("client_{}", opts.num);
-    //let running_flag = Arc::new(AtomicBool::new(true));
 
     // Create and start client
     let (to_coordinator, from_coordinator) = connect_to_coordinator(opts);
 
-    println!("Client {} connected to coordinator.", opts.num);
     let mut client = Client::new(
         client_id_str,
         running.clone(),
@@ -251,7 +238,6 @@ fn run_client(opts: &tpcoptions::TPCOptions, running: Arc<AtomicBool>) {
 /// 3. Starts the participant protocol
 ///
 fn run_participant(opts: &tpcoptions::TPCOptions, running: Arc<AtomicBool>) {
-    println!("Participant {} started.", opts.num);
     // Ensure log directory exists
     fs::create_dir_all(&opts.log_path)
         .unwrap_or_else(|e| panic!("Failed to create log directory {}: {}", opts.log_path, e));
@@ -261,21 +247,17 @@ fn run_participant(opts: &tpcoptions::TPCOptions, running: Arc<AtomicBool>) {
     
     // Connect to coordinator
     let (to_coordinator, from_coordinator) = connect_to_coordinator(opts);
-    println!("Participant {} connected to coordinator.", opts.num);
-
     let mut participant = participant::Participant::new(
         participant_id_str,
         participant_log_path,
         running.clone(),
-        0.95,  // send_success_prob
-        0.95,  // operation_success_prob
+        opts.send_success_probability,
+        opts.operation_success_probability,
         from_coordinator,
         to_coordinator,
     );
 
-    // Start the participant's protocol
     participant.start();
-
 }
 
 

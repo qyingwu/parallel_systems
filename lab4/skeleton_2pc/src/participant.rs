@@ -91,7 +91,6 @@ impl Participant {
             running: r,
             send_success_prob: send_success_prob,
             operation_success_prob: operation_success_prob,
-            // TODO
             receiver,
             sender,
         }
@@ -105,16 +104,17 @@ impl Participant {
     ///
     /// HINT: You will need to implement the actual sending
     ///
-    pub fn send(&mut self, pm: ProtocolMessage) {
+    pub fn send(&mut self, pm: ProtocolMessage) -> bool {
         let x: f64 = rand::random();
         if x <= self.send_success_prob {
-            println!("participant send send_success_prob");
-            if let Err(e) = self.sender.send(pm.clone()) {
-                error!("{}::Failed to send message to coordinator after retries: {:?}", self.id_str, e);
-            }
+            self.sender.send(pm.clone());
+            // Log and send vote
+            self.log.append(pm.mtype, pm.txid.clone(), self.id_str.clone(), 0);
+            
+            true
         } else {
-            println!("participant send send_failure");
             warn!("{}::Message failed to send (simulated failure): {:?}", self.id_str, pm);
+            false
         }
     }
     
@@ -136,8 +136,8 @@ impl Participant {
     pub fn perform_operation(&mut self, request_option: &Option<ProtocolMessage>) -> bool {
         trace!("{}::Performing operation", self.id_str.clone());
         let x: f64 = random();
-        
-        // Create success/failure messages
+       
+        // Create success/failure message
         let message = match request_option {
             Some(req) => ProtocolMessage::generate(
                 if x <= self.operation_success_prob { 
@@ -154,24 +154,13 @@ impl Participant {
                 return false;
             }
         };
+    
 
-        if x <= self.operation_success_prob {
-            // Operation succeeded
-            if let Err(e) = self.sender.send(message) {
-                println!("participant operartion send_success");
-                error!("{}::Failed to send successful operation message: {:?}", self.id_str, e);
-                return false;
-            }
-            true
-        } else {
-            // Operation failed
-            println!("participant operartion send_failure");
-            if let Err(e) = self.sender.send(message) {
-                error!("{}::Failed to send failed operation message: {:?}", self.id_str, e);
-                return false;
-            }
-            false
+        if self.send(message) == true {
+            return x <= self.operation_success_prob
         }
+        return false
+        
     }
 
     ///
@@ -223,50 +212,24 @@ impl Participant {
         while self.running.load(Ordering::Relaxed) {
             match self.receiver.try_recv() {
                 Ok(pm) => {
-                    println!("📨 Received message: {:?}", pm.mtype);
                     match pm.mtype {
                         MessageType::CoordinatorPropose => {
-                            println!("🔄 Processing CoordinatorPropose request...");
                             self.state = ParticipantState::ReceivedP1;
                             trace!("{}::Received proposal: {:?}", self.id_str, pm);
         
                             // Perform operation and decide vote
-                            println!("⚙️ Performing operation...");
-                            let vote = if self.perform_operation(&Some(pm.clone())) {
-                                println!("✅ Operation successful - voting to commit");
-                                MessageType::ParticipantVoteCommit
-                            } else {
-                                println!("❌ Operation failed - voting to abort");
-                                MessageType::ParticipantVoteAbort
-                            };
-        
-                            // Log and send vote
-                            println!("📝 Logging vote: {:?}", vote);
-                            self.log.append(vote, pm.txid.clone(), self.id_str.clone(), 0);
-                            
-                            println!("📤 Sending vote to coordinator");
-                            self.send(
-                                ProtocolMessage::generate(vote, pm.txid.clone(), self.id_str.clone(), 0),
-                            );
-        
-                            self.state = if vote == MessageType::ParticipantVoteCommit {
-                                println!("➡️ State changed to VotedCommit");
+                            self.state = if self.perform_operation(&Some(pm.clone())) == true {
                                 ParticipantState::VotedCommit
                             } else {
-                                println!("➡️ State changed to VotedAbort");
                                 ParticipantState::VotedAbort
                             };
                         }
                         MessageType::CoordinatorCommit | MessageType::CoordinatorAbort => {
-                            println!("📨 Received coordinator decision: {:?}", pm.mtype);
                             trace!("{}::Received global decision: {:?}", self.id_str, pm);
-                            println!("📝 Logging coordinator decision");
                             self.log.append(pm.mtype, pm.txid.clone(), self.id_str.clone(), 0);
-                            println!("➡️ State changed to Quiescent");
                             self.state = ParticipantState::Quiescent;
                         }
                         MessageType::CoordinatorExit => {
-                            println!("🛑 Received exit signal from coordinator");
                             info!("{}::Received CoordinatorExit, shutting down.", self.id_str);
                             self.running.store(false, Ordering::Relaxed);
                             break;

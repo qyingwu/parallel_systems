@@ -104,10 +104,7 @@ impl Coordinator {
     /// HINT: You may need to change the signature of this function
     ///
     pub fn participant_join(&mut self, id: u32, tx: IpcSender<ProtocolMessage>, rx: IpcReceiver<ProtocolMessage>) {
-        println!("\n=== Starting participant_join for ID: {} ===", id);
-        
         self.participants.insert(id, (tx.clone(), rx));
-        println!("Participant {} joined successfully", id);
     }
 
     ///
@@ -127,7 +124,6 @@ impl Coordinator {
         }
         // Add the client to the coordinator's map
         self.clients.insert(id, (tx, rx));
-        info!("Client {} successfully joined", id);
     }
     
 
@@ -137,10 +133,10 @@ impl Coordinator {
     /// requests made by this coordinator before exiting.
     ///
     pub fn report_status(&mut self) {
-        println!(
-            "coordinator     :\tCommitted: {:6}\tAborted: {:6}\tUnknown: {:6}",
-            self.successful_ops, self.failed_ops, self.unknown_ops
-        );
+        let successful_ops: u64 = self.successful_ops;
+        let failed_ops: u64 = self.failed_ops;
+        let unknown_ops: u64 = self.unknown_ops;
+        println!("coordinator     :\tCommitted: {:6}\tAborted: {:6}\tUnknown: {:6}", successful_ops, failed_ops, unknown_ops);
     }
 
     ///
@@ -150,299 +146,161 @@ impl Coordinator {
     /// HINT: Wait for some kind of exit signal before returning from the protocol!
     ///
     pub fn protocol(&mut self) {
-        println!("Starting coordinator protocol");
+        let mut state = CoordinatorState::Quiescent;
+        let mut waited_time = 0;
+        let mut current_msg: Option<ProtocolMessage> = None;
+        let mut current_id: u32 = 0;
+        let mut participant_votes: HashMap<u32, bool> = HashMap::new();
+        let mut voted_yes: u32 = 0;
 
-        println!(
-            "Starting coordinator protocol. Registered clients: {}, participants: {}",
-            self.clients.len(),
-            self.participants.len()
-        );
-
-        let mut transactions_completed = 0;
-        let max_transactions = 10;
-
-        while self.running.load(Ordering::SeqCst) && transactions_completed < max_transactions {
-            println!("\n=== Transaction Loop Iteration {} ===", transactions_completed + 1);
-            
-            // Collect messages from clients
-            let mut client_messages = Vec::new();
-            for (client_id, (_, rx)) in &self.clients {
-                match rx.try_recv() {
-                    Ok(msg) => {
-                        println!("Received message from client {}: {:?}", client_id, msg);
-                        client_messages.push(msg);
-                    }
-                    Err(TryRecvError::Empty) => continue,
-                    Err(e) => {
-                        println!("Error receiving from client {}: {:?}", client_id, e);
-                    }
-                }
-            }
-
-            // Collect messages from participants
-            let mut participant_messages = Vec::new();
-            for (participant_id, (_, rx)) in &self.participants {
-                match rx.try_recv() {
-                    Ok(msg) => {
-                        println!("Received message from participant {}: {:?}", participant_id, msg);
-                        participant_messages.push(msg);
-                    }
-                    Err(TryRecvError::Empty) => continue,
-                    Err(e) => {
-                        println!("Error receiving from participant {}: {:?}", participant_id, e);
-                    }
-                }
-            }
-
-            // Handle collected messages
-            for msg in client_messages {
-                self.handle_message(msg);
-            }
-            for msg in participant_messages {
-                self.handle_message(msg);
-            }
-            transactions_completed += 1;
-
-            thread::sleep(Duration::from_millis(100));
-            
-        }
-        
-    }
-
-    // Add a helper method to handle messages
-    fn handle_message(&mut self, msg: ProtocolMessage) {
-        match msg.mtype {
-            MessageType::ClientRequest => {
-                println!("\n=== Processing ClientRequest ===");
-                println!("📥 Received client request: {:?}", msg);
-                println!("🔍 Request details - TxID: {}, Sender: {}, OpID: {}", 
-                       msg.txid, msg.senderid, msg.opid);
-                println!("📊 Current State: {:?}", self.state);
-                
-                self.state = CoordinatorState::ReceivedRequest;
-                println!("⚡ State changed to: {:?}", self.state);
-                
-                // Log the transaction start
-                self.log.append(MessageType::ClientRequest, msg.txid.clone(), "START".to_string(), 0);
-                println!("📝 Logged transaction start");
-                
-                // Create PREPARE message
-                let prepare_msg = ProtocolMessage::generate(
-                    MessageType::CoordinatorPropose,
-                    msg.txid.clone(),
-                    "coordinator".to_string(),
-                    0
-                );
-                println!("📬 Created PREPARE message: {:?}", prepare_msg);
-                
-                // Send PREPARE to all participants only
-                println!("\n🔄 Starting to send PREPARE to participants...");
-                println!("👥 Number of participants: {}", self.participants.len());
-                
-                let mut prepare_failed = false;
-                for (participant_id, (tx, _)) in &self.participants {
-                    println!("📤 Attempting to send PREPARE to participant {}", participant_id);
-                    match tx.send(prepare_msg.clone()) {
-                        Ok(_) => println!("✅ Successfully sent PREPARE to participant {}", participant_id),
-                        Err(e) => {
-                            println!("❌ Failed to send PREPARE to participant {}: {:?}", participant_id, e);
-                            prepare_failed = true;
-                            break;
-                        }
-                    }
-                }
-                
-                if prepare_failed {
-                    println!("\n⚠️ Prepare phase failed, initiating abort...");
-                    // If prepare failed, abort immediately
-                    let client_abort_msg = ProtocolMessage::generate(
-                        MessageType::ClientResultAbort,
-                        msg.txid.clone(),
-                        "coordinator".to_string(),
-                        0
-                    );
-                    println!("📝 Created abort message: {:?}", client_abort_msg);
-                    
-                    // Send abort to the requesting client
-                    println!("🔍 Looking for client with ID: {}", msg.opid);
-                    if let Some((client_tx, _)) = self.clients.get(&msg.opid) {
-                        println!("📤 Attempting to send abort to client {}", msg.opid);
-                        if let Err(e) = client_tx.send(client_abort_msg) {
-                            println!("❌ Failed to send abort to client {}: {:?}", msg.opid, e);
-                        } else {
-                            println!("✅ Successfully sent abort to client {}", msg.opid);
-                        }
-                    } else {
-                        println!("❌ Could not find client with ID: {}", msg.opid);
-                    }
-                    
-                    self.failed_ops += 1;
-                    println!("📊 Updated failed_ops count: {}", self.failed_ops);
-                    
-                    self.state = CoordinatorState::SentGlobalDecision;
-                    println!("⚡ State changed to: {:?}", self.state);
-                } else {
-                    self.state = CoordinatorState::ProposalSent;
-                    println!("\n✅ All PREPARE messages sent successfully");
-                    println!("⚡ State changed to: {:?}", self.state);
-                    println!("✈️ Transaction {} is now in proposal phase", msg.txid);
-                }
-                println!("=== ClientRequest Processing Complete ===\n");
-            },
-            MessageType::ParticipantVoteCommit => {
-                println!("👍 Received VOTE_COMMIT from participant {}", msg.senderid);
-                
-                // Only process votes if we're in the right state
-                if self.state != CoordinatorState::ProposalSent {
-                    println!("⚠️ Received vote in incorrect state: {:?}", self.state);
-                    return;
-                }
-                
-                // Log the vote
-                self.log.append(MessageType::ClientRequest, msg.txid.clone(), format!("VOTE_COMMIT from {}", msg.senderid), 0);
-                
-                // Check if all participants have voted commit
-                let all_committed = self.participants.len() > 0 && 
-                    self.participants.iter().all(|(_, (_, rx))| {
+        while self.running.load(Ordering::SeqCst) {
+            match state {
+                CoordinatorState::Quiescent => {
+                    participant_votes.clear();
+                    for (client_id, (_, rx)) in self.clients.iter() {
                         match rx.try_recv() {
-                            Ok(vote) => vote.mtype == MessageType::ParticipantVoteCommit,
-                            _ => false
+                            Ok(msg) => {
+                                //println!("Received client request from client {}: {:?}", client_id, msg);
+                                current_msg = Some(msg);
+                                current_id = *client_id;
+                                state = CoordinatorState::ReceivedRequest;
+                                break;
+                            }
+                            Err(TryRecvError::Empty) => continue,
+                            Err(e) => info!("Error receiving from client {}: {:?}", client_id, e),
                         }
-                    });
-                
-                if all_committed {
-                    // All participants voted to commit
-                    println!("✅ All participants voted to commit for transaction {}", msg.txid);
-                    
-                    // Log the decision
-                    self.log.append(MessageType::CoordinatorCommit, msg.txid.clone(), "GLOBAL_COMMIT".to_string(), 0);
-                    
-                    // Send global commit to all participants
-                    self.broadcast_global_decision(msg.txid, MessageType::CoordinatorCommit);
-                    
-                    // Update coordinator state and stats
-                    self.state = CoordinatorState::SentGlobalDecision;
-                    self.successful_ops += 1;
-                }
-            },
-            MessageType::ParticipantVoteAbort => {
-                println!("👎 Received VOTE_ABORT from participant {}", msg.senderid);
-                
-                // Only process votes if we're in the right state
-                if self.state != CoordinatorState::ProposalSent {
-                    println!("⚠️ Received vote abort in incorrect state: {:?}", self.state);
-                    return;
-                }
-                
-                // Log the vote abort
-                self.log.append(MessageType::ParticipantVoteAbort, msg.txid.clone(), format!("VOTE_ABORT from {}", msg.senderid), 0);
-                
-                // Since we received an abort vote, we can immediately abort the transaction
-                println!("❌ Participant {} voted to abort - aborting transaction {}", msg.senderid, msg.txid);
-                
-                // Log the global abort decision
-                self.log.append(MessageType::CoordinatorAbort, msg.txid.clone(), "GLOBAL_ABORT".to_string(), 0);
-                
-                // Send global abort to all participants
-                let txid = msg.txid.clone();
-                self.broadcast_global_decision(txid, MessageType::CoordinatorAbort);
-                
-                // Update coordinator state and stats
-                self.state = CoordinatorState::ReceivedVotesAbort;
-                self.failed_ops += 1;
-                
-                println!("❌ Transaction {} aborted due to participant {} vote", msg.txid, msg.senderid);
-            },
-            MessageType::CoordinatorCommit => {
-                println!("✅ Processing COORDINATOR_COMMIT for transaction {}", msg.txid);
-                
-                // Log the commit decision
-                self.log.append(MessageType::CoordinatorCommit, msg.txid.clone(), "GLOBAL_COMMIT".to_string(), 0);
-                
-                // Create commit messages - different types for participants and clients
-                let participant_msg = ProtocolMessage::generate(
-                    MessageType::CoordinatorCommit,
-                    msg.txid.clone(),
-                    "coordinator".to_string(),
-                    0
-                );
-                
-                let client_msg = ProtocolMessage::generate(
-                    MessageType::ClientResultCommit,  // Changed for clients
-                    msg.txid.clone(),
-                    "coordinator".to_string(),
-                    0
-                );
-                
-                // Notify all participants
-                for (participant_id, (tx, _)) in &self.participants {
-                    if let Err(e) = tx.send(participant_msg.clone()) {
-                        println!("⚠️ Failed to send commit to participant {}: {:?}", participant_id, e);
                     }
                 }
-                
-                // Notify all clients with ClientResultCommit
-                for (client_id, (tx, _)) in &self.clients {
-                    if let Err(e) = tx.send(client_msg.clone()) {
-                        println!("⚠️ Failed to send commit to client {}: {:?}", client_id, e);
+                CoordinatorState::ReceivedRequest => {
+                    if let Some(ref msg) = current_msg {
+                        self.log.append(
+                            MessageType::CoordinatorPropose,
+                            msg.txid.clone(),
+                            "coordinator".to_string(),
+                            0
+                        );
+                        
+                        let txid = msg.txid.clone();
+                        let prepare_msg = ProtocolMessage::generate(
+                            MessageType::CoordinatorPropose,
+                            txid,
+                            "coordinator".to_string(),
+                            0,
+                        );
+                        for (participant_id, (tx, _)) in &self.participants {
+                            match tx.send(prepare_msg.clone()) {
+                                Ok(_) => info!("Sent PREPARE to participant {}", participant_id),
+                                Err(e) => info!("Error sending prepare to participant {}: {:?}", participant_id, e),
+                            }
+                        }
+                        state = CoordinatorState::ProposalSent;
+                        waited_time = 0;
                     }
                 }
-                
-                // Update coordinator state and stats
-                self.successful_ops += 1;
-                self.state = CoordinatorState::SentGlobalDecision;
-                
-                println!("✅ Commit complete for transaction {}", msg.txid);
-            },
-            MessageType::CoordinatorAbort => {
-                println!("❌ Processing COORDINATOR_ABORT for transaction {}", msg.txid);
-                
-                // Log the abort decision
-                self.log.append(MessageType::CoordinatorAbort, msg.txid.clone(), "GLOBAL_ABORT".to_string(), 0);
-                
-                // Create abort messages - different types for participants and clients
-                let participant_msg = ProtocolMessage::generate(
-                    MessageType::CoordinatorAbort,
-                    msg.txid.clone(),
-                    "coordinator".to_string(),
-                    0
-                );
-                
-                let client_msg = ProtocolMessage::generate(
-                    MessageType::ClientResultAbort,  // Changed for clients
-                    msg.txid.clone(),
-                    "coordinator".to_string(),
-                    0
-                );
-                
-                // Notify all participants
-                for (participant_id, (tx, _)) in &self.participants {
-                    if let Err(e) = tx.send(participant_msg.clone()) {
-                        println!("⚠️ Failed to send abort to participant {}: {:?}", participant_id, e);
+                CoordinatorState::ProposalSent => {
+                    // Check for votes from all participants
+                    for (participant_id, (_, rx)) in &self.participants {
+                        match rx.try_recv() {
+                            Ok(vote) => {
+                                match vote.mtype {
+                                    MessageType::ParticipantVoteCommit => {
+                                        if current_msg.as_ref().unwrap().txid != vote.txid {
+                                            warn!("vote transaction_txid {} != current.txid {}", 
+                                                vote.txid, current_msg.as_ref().unwrap().txid);
+                                        } else {
+                                            participant_votes.insert(*participant_id, true);
+                                        }
+                                        
+                                    }
+                                    MessageType::ParticipantVoteAbort => {
+                                        state = CoordinatorState::ReceivedVotesAbort;
+                                        break;
+                                    }
+                                    _ => {} 
+                                }
+                            }
+                            Err(TryRecvError::Empty) => continue,
+                            Err(e) => {
+                                info!("DEBUG: Error receiving vote from participant {} for transaction {}: {:?}", 
+                                    participant_id, current_msg.as_ref().unwrap().txid, e);
+                                state = CoordinatorState::ReceivedVotesAbort;
+                                break;
+                            }
+                        }
+                    }
+
+                    // Check if we have all votes and they're all commits
+                    if participant_votes.len() == self.participants.len() 
+                        && participant_votes.values().all(|&v| v) {
+                        if state != CoordinatorState::ReceivedVotesAbort {
+                            state = CoordinatorState::ReceivedVotesCommit;
+                        }
+                    }
+
+                    // Handle timeout
+                    waited_time += 1;
+                    if waited_time > 5 {
+                        if let Some(ref msg) = current_msg {
+                            self.log.append(
+                                MessageType::CoordinatorAbort,
+                                msg.txid.clone(),
+                                "coordinator".to_string(),
+                                0
+                            );
+                        }
+                        state = CoordinatorState::ReceivedVotesAbort;
+                    }
+                    thread::sleep(Duration::from_millis(100));
+                }
+                CoordinatorState::ReceivedVotesCommit => {
+                    if let Some(ref msg) = current_msg {
+                        println!("DEBUG: Committing transaction {} with votes: {:?}", 
+                            msg.txid, participant_votes);
+                        self.broadcast_global_decision(
+                            msg.txid.clone(),
+                            current_id,
+                            MessageType::CoordinatorCommit,
+                        );
+                        self.log.append(
+                            MessageType::CoordinatorCommit,
+                            msg.txid.clone(),
+                            "coordinator".to_string(),
+                            0
+                        );
+                        state = CoordinatorState::SentGlobalDecision;
+                        self.successful_ops += 1;
                     }
                 }
-                
-                // Notify all clients with ClientResultAbort
-                for (client_id, (tx, _)) in &self.clients {
-                    if let Err(e) = tx.send(client_msg.clone()) {
-                        println!("⚠️ Failed to send abort to client {}: {:?}", client_id, e);
+                CoordinatorState::ReceivedVotesAbort => {
+                    if let Some(ref msg) = current_msg {
+                        self.broadcast_global_decision(
+                            msg.txid.clone(),
+                            current_id,
+                            MessageType::CoordinatorAbort,
+                        );
+                        self.log.append(
+                            MessageType::CoordinatorAbort,
+                            msg.txid.clone(),
+                            "coordinator".to_string(),
+                            0
+                        );
+                        state = CoordinatorState::SentGlobalDecision;
+                        self.failed_ops += 1;
                     }
                 }
-                
-                // Update coordinator state and stats
-                self.failed_ops += 1;
-                self.state = CoordinatorState::SentGlobalDecision;
-                
-                println!("❌ Abort complete for transaction {}", msg.txid);
-            },
-            _ => {
-                println!("⚠️ Unhandled message type: {:?}", msg.mtype);
+                CoordinatorState::SentGlobalDecision => {
+                    // Reset to Quiescent for the next transaction
+                    current_msg = None;
+                    current_id = 0;
+                    state = CoordinatorState::Quiescent;
+                }
             }
         }
+        self.report_status();
     }
 
     /// Send the global decision (commit or abort) to all participants and clients.
-    fn broadcast_global_decision(&mut self, txid: String, decision: MessageType) {
+    fn broadcast_global_decision(&mut self, txid: String, client_id: u32, decision: MessageType) {
         // Create different messages for participants and clients
         let participant_message = ProtocolMessage::generate(
             decision.clone(),  // CoordinatorCommit or CoordinatorAbort
@@ -472,19 +330,19 @@ impl Coordinator {
             }
         }
 
-        // Send to clients
-        for (client_id, (tx, _)) in &self.clients {
-            if let Err(e) = tx.send(client_message.clone()) {
+        // Send only to the client that initiated the transaction
+        if let Some((tx, _)) = self.clients.get(&client_id) {
+            if let Err(e) = tx.send(client_message) {
                 error!("Failed to send result to client {}: {:?}", client_id, e);
             }
+        } else {
+            error!("Client {} no longer exists", client_id);
         }
-    
         info!("Broadcasted global decision {:?} for transaction {}", decision, txid);
     }
     
 
     pub fn start(&mut self) {
-        // Start the coordinator protocol
         self.protocol();
     }
 }

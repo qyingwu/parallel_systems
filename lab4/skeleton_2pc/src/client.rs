@@ -94,7 +94,6 @@ impl Client {
     /// Send the next operation to the coordinator
     ///
     pub fn send_next_operation(&mut self) {
-        // First check if we're still running
         if !self.running.load(Ordering::Relaxed) {
             return;
         }
@@ -106,8 +105,6 @@ impl Client {
                                                     txid.clone(),
                                                     self.id_str.clone(),
                                                     self.num_requests);
-        println!("{}::Sending operation #{}", self.id_str.clone(), self.num_requests);
-
         // Send the message using the IPC channel
         match self.sender.send(pm) {
             Ok(_) => {
@@ -116,8 +113,6 @@ impl Client {
             Err(e) => {
                 error!("{}::Failed to send operation: {}", self.id_str.clone(), e);
                 self.transaction_status.insert(txid.clone(), RequestStatus::Unknown);
-                self.unknown_ops += 1;
-                // Consider shutting down since coordinator is unreachable
                 self.shutdown();
             }
         }
@@ -131,36 +126,26 @@ impl Client {
     ///
 
     pub fn recv_result(&mut self) {
-        println!("{}::Receiving Coordinator Result", self.id_str.clone());
-
         match self.receiver.recv() {
             Ok(msg) => {
-                println!("{}::Receiving msg: {:?}", self.id_str, msg);  // Modified to properly format msg
                 match msg.mtype {
-                    // Skip ClientRequest messages
-
                     MessageType::ClientResultCommit => {
                         self.transaction_status.insert(msg.txid.clone(), RequestStatus::Committed);
                         self.successful_ops += 1;
-                        println!("{}::Received commit for operation: {}", self.id_str.clone(), msg.txid);
                         
                     }
                     MessageType::ClientResultAbort => {
                         self.transaction_status.insert(msg.txid.clone(), RequestStatus::Aborted);
                         self.failed_ops += 1;
-                        info!("{}::Received abort for operation: {}", self.id_str.clone(), msg.txid);
-                        
                     }
                     MessageType::CoordinatorExit => {
                         info!("{}::Coordinator is shutting down", self.id_str.clone());
                         self.shutdown();
-                        
                     }
                     unexpected_msg => {
                         self.unknown_ops += 1;
                         error!("{}::Unexpected message type {:?} received for operation: {}", 
-                                self.id_str.clone(), unexpected_msg, msg.txid);
-                        
+                                self.id_str.clone(), unexpected_msg, msg.txid);  
                     }
                 }
             },
@@ -178,14 +163,12 @@ impl Client {
     /// requests made by this client before exiting.
     ///
     pub fn report_status(&mut self) {
-        // TODO: Collect actual stats
-        println!(
-            "{:16}:\tCommitted: {:6}\tAborted: {:6}\tUnknown: {:6}",
-            self.id_str.clone(),
-            self.successful_ops,
-            self.failed_ops,
-            self.unknown_ops
-        );
+        let successful_ops: u64 = self.successful_ops;
+        let failed_ops: u64 = self.failed_ops;
+        let unknown_ops: u64 = self.unknown_ops;
+
+        println!("{:16}:\tCommitted: {:6}\tAborted: {:6}\tUnknown: {:6}", 
+        self.id_str.clone(), successful_ops, failed_ops, unknown_ops);
     }
 
     ///
@@ -196,7 +179,7 @@ impl Client {
     ///       exit signal before returning from the protocol method!
     ///
     pub fn protocol(&mut self, n_requests: u32) {
-        println!("{}::Starting protocol with {} requests", self.id_str, n_requests);
+        //println!("{}::Starting protocol with {} requests", self.id_str, n_requests);
         
         // Continue with normal protocol 
         for i in 0..n_requests {
@@ -208,10 +191,9 @@ impl Client {
             self.recv_result();
         }
 
-        println!("{}::All requests processed, waiting for exit signal", self.id_str);
+        //println!("{}::All requests processed, waiting for exit signal", self.id_str);
         self.wait_for_exit_signal();
-        println!("{}::Protocol completed, generating final report", self.id_str);
-        self.report_status();
+        //self.report_status();
     }
 
 
