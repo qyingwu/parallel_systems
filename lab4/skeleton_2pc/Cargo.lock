@@ -608,6 +608,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
+name = "skeleton_2pc"
+version = "0.1.0"
+dependencies = [
+ "atomic-counter",
+ "bincode",
+ "clap",
+ "ctrlc",
+ "ipc-channel",
+ "log",
+ "rand",
+ "serde",
+ "serde_json",
+ "shellexpand",
+ "stderrlog",
+]
+
+[[package]]
 name = "slab"
 version = "0.4.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -717,24 +734,6 @@ checksum = "1697c4b57aeeb7a536b647165a2825faddffb1d3bad386d507709bd51a90bb14"
 dependencies = [
  "lazy_static 0.2.11",
  "unreachable",
-]
-
-[[package]]
-name = "two_phase_commit"
-version = "0.1.0"
-dependencies = [
- "atomic-counter",
- "bincode",
- "clap",
- "crossbeam-channel",
- "ctrlc",
- "ipc-channel",
- "log",
- "rand",
- "serde",
- "serde_json",
- "shellexpand",
- "stderrlog",
 ]
 
 [[package]]

@@ -7,7 +7,6 @@ extern crate log;
 extern crate rand;
 extern crate stderrlog;
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -20,7 +19,6 @@ use participant::ipc_channel::ipc::IpcSender as Sender;
 
 use message::MessageType;
 use message::ProtocolMessage;
-use message::RequestStatus;
 use oplog;
 
 ///
@@ -107,11 +105,17 @@ impl Participant {
     pub fn send(&mut self, pm: ProtocolMessage) -> bool {
         let x: f64 = rand::random();
         if x <= self.send_success_prob {
-            self.sender.send(pm.clone());
-            // Log and send vote
-            self.log.append(pm.mtype, pm.txid.clone(), self.id_str.clone(), 0);
-            
-            true
+            match self.sender.send(pm.clone()) {
+                Ok(_) => {
+                    // Log and send vote
+                    self.log.append(pm.mtype, pm.txid.clone(), self.id_str.clone(), 0);
+                    true
+                }
+                Err(e) => {
+                    error!("{}::Failed to send message: {:?}", self.id_str, e);
+                    false
+                }
+            }
         } else {
             warn!("{}::Message failed to send (simulated failure): {:?}", self.id_str, pm);
             false

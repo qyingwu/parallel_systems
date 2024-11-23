@@ -13,7 +13,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::collections::HashMap;
 
 use client::ipc_channel::ipc::IpcReceiver as Receiver;
-use client::ipc_channel::ipc::TryRecvError;
 use client::ipc_channel::ipc::IpcSender as Sender;
 
 use message;

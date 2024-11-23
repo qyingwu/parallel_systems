@@ -9,21 +9,16 @@ extern crate ipc_channel;
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
-use std::time::SystemTime;
 
 use coordinator::ipc_channel::ipc::IpcSender;
 use coordinator::ipc_channel::ipc::IpcReceiver;
 use coordinator::ipc_channel::ipc::TryRecvError;
-use coordinator::ipc_channel::ipc::channel;
 
-use message;
 use message::MessageType;
 use message::ProtocolMessage;
-use message::RequestStatus;
 use oplog;
 
 /// CoordinatorState
@@ -151,7 +146,6 @@ impl Coordinator {
         let mut current_msg: Option<ProtocolMessage> = None;
         let mut current_id: u32 = 0;
         let mut participant_votes: HashMap<u32, bool> = HashMap::new();
-        let mut voted_yes: u32 = 0;
 
         while self.running.load(Ordering::SeqCst) {
             match state {

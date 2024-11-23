@@ -4,7 +4,6 @@ extern crate stderrlog;
 extern crate clap;
 extern crate ctrlc;
 extern crate ipc_channel;
-extern crate crossbeam_channel;
 use std::env;
 use std::fs;
 use std::sync::{Arc, Barrier};
@@ -14,8 +13,7 @@ use client::Client;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::process::{Child, Command, Stdio};
 use ipc_channel::ipc::{IpcSender, IpcReceiver, IpcOneShotServer, channel};
-use std::thread::{self, sleep, JoinHandle};
-use std::time::Duration;
+use std::thread::{self};
 pub mod message;
 pub mod oplog;
 pub mod coordinator;
@@ -23,8 +21,7 @@ pub mod participant;
 pub mod client;
 pub mod checker;
 pub mod tpcoptions;
-use message::{MessageType, ProtocolMessage};
-use participant::Participant; 
+use message::{ProtocolMessage};
 
 
 ///
@@ -124,11 +121,6 @@ fn connect_to_coordinator(opts: &tpcoptions::TPCOptions) -> (IpcSender<ProtocolM
 /// 4. Starts the coordinator protocol
 /// 5. Wait until the children finish execution
 ///
-enum ProcessHandle {
-    Thread(JoinHandle<()>),
-    Process(Child)
-}
-
 fn run(opts: &tpcoptions::TPCOptions, running: Arc<AtomicBool>) {
     println!("Starting run function with options: {:?}", opts);
 

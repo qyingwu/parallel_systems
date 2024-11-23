@@ -11,3 +11,6 @@
 
 # Environment files
 .env
+
+#pdf pictures
+*.png
